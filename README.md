@@ -1,33 +1,55 @@
-# 🍲 Tempero das Gurias — Sistema de Fechamento Mensal
+# 🍲 Tempero das Gurias — Fechamento Financeiro
 
-Aplicação interativa desenvolvida em **Python + Streamlit** para automatizar o fechamento financeiro mensal da Tempero das Gurias, processando extratos do **Itaú Empresas** e **PagSeguro**, categorizando lançamentos e gerando relatórios completos em Excel.
+Aplicação em **Python + Streamlit** para automatizar o fechamento financeiro da Tempero das Gurias usando extratos do **Itaú** e **PagSeguro**.
+
+O sistema calcula entradas/saídas, classifica categorias automaticamente e gera relatórios em Excel, além de manter um histórico de fechamentos.
 
 ---
 
 ## 🚀 Funcionalidades
 
-- Upload de extratos do **Itaú** e **PagSeguro** (.csv ou .xlsx)
-- Cálculo automático de:
-  - Entradas e saídas por conta  
-  - Resultado consolidado do período  
-  - Saldo final  
-- Classificação automática em categorias:
-  - Vendas / Receitas  
-  - Fornecedores e Insumos  
-  - Folha de Pagamento  
-  - Aluguel  
-  - Contabilidade  
-  - Tarifas  
-  - Investimentos / Rendimentos  
-  - e muito mais…
-- Geração de **relatório Excel** com:
-  - Resumo do período  
-  - Categorias  
-  - Movimentos  
-- **Histórico de fechamentos salvos localmente**, com possibilidade de baixar cada relatório
-- Interface simples e intuitiva via Streamlit
+- Upload de extratos Itaú/PagSeguro (.csv ou .xlsx)
+- Cálculo automático:
+  - Entradas / Saídas
+  - Resultado consolidado
+  - Saldo final
+- Classificação automática por categoria
+- Geração de relatório Excel:
+  - Resumo
+  - Categorias
+  - Movimentos
+- Histórico de fechamentos salvos
 
 ---
 
-## 🧩 Estrutura do Projeto
+## ▶️ Executar Localmente
+
+```bash
+pip install -r requirements.txt
+streamlit run fechamento_tempero_app.py
+
+Acesse em:
+http://localhost:8501
+
+☁️ Deploy no Streamlit Cloud (gratuito)
+
+Suba este projeto para o GitHub
+
+Acesse: https://share.streamlit.io
+
+Clique em New App
+
+Selecione:
+
+Repositório: Tempero-Fechamento
+
+Arquivo: fechamento_tempero_app.py
+
+Deploy 🎉
+URL ficará assim:
+https://<nome>.streamlit.app
+
+📄 Licença
+
+Uso interno da Tempero das Gurias.
 
