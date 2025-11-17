@@ -8,6 +8,33 @@ from datetime import datetime
 import pandas as pd
 import streamlit as st
 
+# ---------- Autenticação simples por senha (via secrets) ----------
+
+def check_auth():
+    # se já autenticou na sessão, libera
+    if st.session_state.get("auth_ok"):
+        return True
+
+    st.title("Tempero das Gurias - Acesso Restrito")
+
+    senha = st.text_input("Digite a senha para acessar o sistema:", type="password")
+    ok = st.button("Entrar")
+
+    if ok:
+        senha_correta = st.secrets.get("APP_PASSWORD")
+        if senha_correta is None:
+            st.error("Senha não configurada no Streamlit Secrets (APP_PASSWORD).")
+            return False
+
+        if senha == senha_correta:
+            st.session_state["auth_ok"] = True
+            st.experimental_rerun()  # recarrega já autenticado
+        else:
+            st.error("Senha incorreta. Tente novamente.")
+            return False
+
+    # Se ainda não autenticou, não libera o app
+    st.stop()
 
 # ---------- Funções de base ----------
 
@@ -526,3 +553,4 @@ if historico_dir.exists():
                 )
 else:
     st.write("Nenhum fechamento salvo ainda.")
+
