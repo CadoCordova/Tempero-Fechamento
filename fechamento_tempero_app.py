@@ -535,7 +535,7 @@ if arquivo_itau and arquivo_pag:
         ]
     )
 
-buffer = BytesIO()
+    buffer = BytesIO()
 with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
     # Escreve as abas
     df_resumo_contas.to_excel(writer, sheet_name="Resumo", index=False, startrow=0)
@@ -560,7 +560,6 @@ with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
     formatar_tabela_excel(ws_resumo, df_consolidado, start_row=len(df_resumo_contas) + 3)
 
 buffer.seek(0)
-
 
     st.subheader("Relatório do período atual")
 
