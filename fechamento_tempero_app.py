@@ -3,6 +3,7 @@ from collections import defaultdict
 from pathlib import Path
 from io import BytesIO
 from datetime import datetime
+import json
 
 import pandas as pd
 import streamlit as st
@@ -297,10 +298,40 @@ def carregar_extrato_pagseguro_upload(uploaded_file):
     return entradas, saidas, resultado, movimentos
 
 
+# ---------- Regras de categorização aprendidas ----------
+
+RULES_PATH = Path("regras_categorias.json")
+REGRAS_CATEGORIA = {}  # será carregado em runtime
+
+
+def carregar_regras():
+    if RULES_PATH.exists():
+        try:
+            with RULES_PATH.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict):
+                    return data
+        except Exception:
+            pass
+    return {}
+
+
+def salvar_regras(regras: dict):
+    with RULES_PATH.open("w", encoding="utf-8") as f:
+        json.dump(regras, f, ensure_ascii=False, indent=2)
+
+
 def classificar_categoria(mov):
     desc = normalizar_texto(mov.get("descricao"))
     valor = mov.get("valor", 0.0)
 
+    # 1) Regras aprendidas pelo usuário (prioridade máxima)
+    if REGRAS_CATEGORIA:
+        for padrao, categoria in REGRAS_CATEGORIA.items():
+            if padrao in desc:
+                return categoria
+
+    # 2) Regras fixas que já tínhamos
     if "ANTINSECT" in desc:
         return "Dedetização / Controle de Pragas"
 
@@ -433,6 +464,10 @@ nome_periodo = st.sidebar.text_input(
 # ---------- Lógica principal ----------
 
 if arquivo_itau and arquivo_pag:
+    # Carrega regras aprendidas (se existirem)
+    global REGRAS_CATEGORIA
+    REGRAS_CATEGORIA = carregar_regras()
+
     try:
         saldo_inicial = parse_numero_br(saldo_inicial_input)
     except Exception:
@@ -476,10 +511,8 @@ if arquivo_itau and arquivo_pag:
     st.write("Saldo inicial:", format_currency(saldo_inicial))
     st.write("Saldo final  :", format_currency(saldo_final))
 
-    # ---------- Categorias e movimentos ----------
+    # ---------- Categorias e movimentos (auto) ----------
     movimentos = mov_itau + mov_pag
-    entradas_cat = defaultdict(float)
-    saidas_cat = defaultdict(float)
     movimentos_cat = []
 
     for mov in movimentos:
@@ -494,6 +527,79 @@ if arquivo_itau and arquivo_pag:
         }
         movimentos_cat.append(novo_mov)
 
+    df_mov = pd.DataFrame(movimentos_cat)
+
+    # ---------- Conferência e ajustes de categorias ----------
+    st.subheader("Conferência e ajustes de categorias")
+
+    categorias_possiveis = [
+        "Vendas / Receitas",
+        "Fornecedores e Insumos",
+        "Folha de Pagamento",
+        "Aluguel Comercial",
+        "Contabilidade e RH",
+        "Dedetização / Controle de Pragas",
+        "Energia Elétrica",
+        "Motoboy / Entregas",
+        "Nutricionista",
+        "Impostos e Encargos",
+        "Investimentos (Aplicações)",
+        "Rendimentos de Aplicações",
+        "Fatura Cartão",
+        "Transferência Interna / Sócios",
+        "A Classificar",
+    ]
+
+    edited_df = st.data_editor(
+        df_mov,
+        key="editor_movimentos",
+        use_container_width=True,
+        num_rows="fixed",
+        column_config={
+            "Categoria": st.column_config.SelectboxColumn(
+                "Categoria",
+                options=categorias_possiveis,
+                help="Ajuste a categoria se necessário.",
+            )
+        },
+    )
+
+    st.markdown(
+        "_Dica: ajuste as categorias que estiverem erradas e, se quiser que o sistema memorize, clique em **Salvar regras de categorização**._"
+    )
+
+    salvar_ajustes = st.button("Salvar regras de categorização")
+
+    if salvar_ajustes:
+        regras = carregar_regras()
+        alteracoes = 0
+        for _, row in edited_df.iterrows():
+            desc = row.get("Descrição")
+            cat = row.get("Categoria")
+            if not desc or not cat:
+                continue
+            desc_norm = normalizar_texto(desc)
+            # regra simples: se a descrição contiver esse texto normalizado, aplica a categoria
+            if regras.get(desc_norm) != cat:
+                regras[desc_norm] = cat
+                alteracoes += 1
+        salvar_regras(regras)
+        REGRAS_CATEGORIA = regras
+        st.success(
+            f"{alteracoes} regra(s) de categorização salva(s). "
+            "Nos próximos fechamentos, descrições iguais serão classificadas automaticamente."
+        )
+
+    # Usaremos sempre o edited_df como base para resumo/exportação
+    df_mov_export = edited_df.copy()
+
+    # ---------- Resumo por categoria com base nas categorias ajustadas ----------
+    entradas_cat = defaultdict(float)
+    saidas_cat = defaultdict(float)
+
+    for _, row in df_mov_export.iterrows():
+        cat = row["Categoria"]
+        v = row["Valor"]
         if v > 0:
             entradas_cat[cat] += v
         elif v < 0:
@@ -519,8 +625,6 @@ if arquivo_itau and arquivo_pag:
     st.dataframe(df_cat_display, use_container_width=True)
 
     # ---------- DataFrames para relatório ----------
-    df_mov_export = pd.DataFrame(movimentos_cat)
-
     df_resumo_contas = pd.DataFrame(
         [
             {"Conta": "Itaú", "Entradas": ent_itau, "Saídas": sai_itau, "Resultado": res_itau},
