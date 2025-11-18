@@ -12,6 +12,15 @@ from openpyxl.styles import Font, Alignment, PatternFill
 from openpyxl.utils import get_column_letter
 
 
+# ---------- Caminhos de arquivos auxiliares ----------
+
+RULES_PATH = Path("regras_categorias.json")
+CATEGORIAS_PATH = Path("categorias_personalizadas.json")
+
+# dicionário global de regras aprendidas
+REGRAS_CATEGORIA = {}
+
+
 # ---------- Função de formatação genérica para tabelas no Excel ----------
 
 def formatar_tabela_excel(ws, df, start_row=1):
@@ -300,10 +309,6 @@ def carregar_extrato_pagseguro_upload(uploaded_file):
 
 # ---------- Regras de categorização aprendidas ----------
 
-RULES_PATH = Path("regras_categorias.json")
-REGRAS_CATEGORIA = {}  # será carregado em runtime
-
-
 def carregar_regras():
     if RULES_PATH.exists():
         try:
@@ -321,79 +326,97 @@ def salvar_regras(regras: dict):
         json.dump(regras, f, ensure_ascii=False, indent=2)
 
 
+def carregar_categorias_personalizadas():
+    if CATEGORIAS_PATH.exists():
+        try:
+            with CATEGORIAS_PATH.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, list):
+                    return data
+        except Exception:
+            pass
+    return []
+
+
+def salvar_categorias_personalizadas(lista):
+    with CATEGORIAS_PATH.open("w", encoding="utf-8") as f:
+        json.dump(lista, f, ensure_ascii=False, indent=2)
+
+
 def classificar_categoria(mov):
-    desc = normalizar_texto(mov.get("descricao"))
+    desc_orig = mov.get("descricao")
+    desc_norm = normalizar_texto(desc_orig)
     valor = mov.get("valor", 0.0)
 
     # 1) Regras aprendidas pelo usuário (prioridade máxima)
     if REGRAS_CATEGORIA:
         for padrao, categoria in REGRAS_CATEGORIA.items():
-            if padrao in desc:
+            if padrao in desc_norm:
                 return categoria
 
     # 2) Regras fixas que já tínhamos
-    if "ANTINSECT" in desc:
+    if "ANTINSECT" in desc_norm:
         return "Dedetização / Controle de Pragas"
 
-    if "CIA ESTADUAL DE DIST" in desc or "CEEE" in desc or "ENERGIA ELETRICA" in desc:
+    if "CIA ESTADUAL DE DIST" in desc_norm or "CEEE" in desc_norm or "ENERGIA ELETRICA" in desc_norm:
         return "Energia Elétrica"
 
-    if "RECH CONTABILIDADE" in desc or "RECH CONT" in desc:
+    if "RECH CONTABILIDADE" in desc_norm or "RECH CONT" in desc_norm:
         return "Contabilidade e RH"
 
     if (
-        "BUSINESS      0503-2852" in desc
-        or "BUSINESS 0503-2852" in desc
-        or "ITAU UNIBANCO HOLDING S.A." in desc
-        or "CARTAO" in desc
-        or "CARTÃO" in desc
+        "BUSINESS      0503-2852" in desc_norm
+        or "BUSINESS 0503-2852" in desc_norm
+        or "ITAU UNIBANCO HOLDING S.A." in desc_norm
+        or "CARTAO" in desc_norm
+        or "CARTÃO" in desc_norm
     ):
         return "Fatura Cartão"
 
-    if "APLICACAO" in desc or "APLICAÇÃO" in desc or "CDB" in desc or "CREDBANCRF" in desc:
+    if "APLICACAO" in desc_norm or "APLICAÇÃO" in desc_norm or "CDB" in desc_norm or "CREDBANCRF" in desc_norm:
         return "Investimentos (Aplicações)"
 
     if (
-        "REND PAGO APLIC" in desc
-        or "RENDIMENTO APLIC" in desc
-        or "REND APLIC" in desc
-        or "RENDIMENTO" in desc
+        "REND PAGO APLIC" in desc_norm
+        or "RENDIMENTO APLIC" in desc_norm
+        or "REND APLIC" in desc_norm
+        or "RENDIMENTO" in desc_norm
     ):
         return "Rendimentos de Aplicações"
 
-    if "ZOOP" in desc or "ALUGUEL" in desc:
+    if "ZOOP" in desc_norm or "ALUGUEL" in desc_norm:
         return "Aluguel Comercial"
 
-    if "MOTOBOY" in desc or "ENTREGA" in desc:
+    if "MOTOBOY" in desc_norm or "ENTREGA" in desc_norm:
         return "Motoboy / Entregas"
 
     if (
-        "CAROLINE" in desc
-        or "VERONICA" in desc
-        or "VERONICA DA SILVA CARDOSO" in desc
-        or "EVELLYN" in desc
-        or "SALARIO" in desc
-        or "SALÁRIO" in desc
-        or "FOLHA" in desc
+        "CAROLINE" in desc_norm
+        or "VERONICA" in desc_norm
+        or "VERONICA DA SILVA CARDOSO" in desc_norm
+        or "EVELLYN" in desc_norm
+        or "SALARIO" in desc_norm
+        or "SALÁRIO" in desc_norm
+        or "FOLHA" in desc_norm
     ):
         return "Folha de Pagamento"
 
-    if "ANA PAULA" in desc or "NUTRICIONISTA" in desc:
+    if "ANA PAULA" in desc_norm or "NUTRICIONISTA" in desc_norm:
         return "Nutricionista"
 
     if (
-        "DARF" in desc
-        or "GPS" in desc
-        or "FGTS" in desc
-        or "INSS" in desc
-        or "SIMPLES NACIONAL" in desc
-        or "IMPOSTO" in desc
+        "DARF" in desc_norm
+        or "GPS" in desc_norm
+        or "FGTS" in desc_norm
+        or "INSS" in desc_norm
+        or "SIMPLES NACIONAL" in desc_norm
+        or "IMPOSTO" in desc_norm
     ):
         return "Impostos e Encargos"
 
     if (
-        ("TRANSFERENCIA" in desc or "TRANSFERÊNCIA" in desc or "PIX" in desc)
-        and ("RICARDO" in desc or "LIZIANI" in desc or "LIZI" in desc)
+        ("TRANSFERENCIA" in desc_norm or "TRANSFERÊNCIA" in desc_norm or "PIX" in desc_norm)
+        and ("RICARDO" in desc_norm or "LIZIANI" in desc_norm or "LIZI" in desc_norm)
     ):
         return "Transferência Interna / Sócios"
 
@@ -460,6 +483,7 @@ nome_periodo = st.sidebar.text_input(
     value=default_periodo,
     help='Ex.: "2025-11 1ª quinzena", "2025-10 mês cheio"',
 )
+
 
 # ---------- Lógica principal ----------
 
@@ -528,10 +552,10 @@ if arquivo_itau and arquivo_pag:
 
     df_mov = pd.DataFrame(movimentos_cat)
 
-    # ---------- Conferência e ajustes de categorias ----------
-    st.subheader("Conferência e ajustes de categorias")
+    # ---------- Gerenciar categorias (criação de novas) ----------
+    st.subheader("Gerenciar Categorias")
 
-    categorias_possiveis = [
+    categorias_padrao = [
         "Vendas / Receitas",
         "Fornecedores e Insumos",
         "Folha de Pagamento",
@@ -549,6 +573,23 @@ if arquivo_itau and arquivo_pag:
         "A Classificar",
     ]
 
+    categorias_custom = carregar_categorias_personalizadas()
+    categorias_possiveis = categorias_padrao + categorias_custom
+
+    nova_cat = st.text_input("Criar nova categoria:")
+    if st.button("Adicionar categoria"):
+        if nova_cat.strip() != "":
+            if nova_cat not in categorias_possiveis:
+                categorias_custom.append(nova_cat)
+                salvar_categorias_personalizadas(categorias_custom)
+                st.success(f"Categoria '{nova_cat}' criada com sucesso!")
+                st.rerun()
+            else:
+                st.warning("Essa categoria já existe.")
+
+    # ---------- Conferência e ajustes de categorias ----------
+    st.subheader("Conferência e ajustes de categorias")
+
     edited_df = st.data_editor(
         df_mov,
         key="editor_movimentos",
@@ -564,7 +605,8 @@ if arquivo_itau and arquivo_pag:
     )
 
     st.markdown(
-        "_Dica: ajuste as categorias que estiverem erradas e, se quiser que o sistema memorize, clique em **Salvar regras de categorização**._"
+        "_Dica: ajuste as categorias que estiverem erradas e, se quiser que o sistema memorize, "
+        "clique em **Salvar regras de categorização**._"
     )
 
     salvar_ajustes = st.button("Salvar regras de categorização")
@@ -578,7 +620,6 @@ if arquivo_itau and arquivo_pag:
             if not desc or not cat:
                 continue
             desc_norm = normalizar_texto(desc)
-            # regra simples: se a descrição contiver esse texto normalizado, aplica a categoria
             if regras.get(desc_norm) != cat:
                 regras[desc_norm] = cat
                 alteracoes += 1
