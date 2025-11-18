@@ -224,7 +224,20 @@ def carregar_extrato_itau_upload(uploaded_file):
 
     linhas = ler_arquivo_tabela_upload(uploaded_file)
 
-    for linha in linhas:
+        for linha in linhas:
+        # extrai descrição primeiro
+        descricao = extrair_descricao_linha(linha)
+        desc_norm = normalizar_texto(descricao)
+
+        # pula linhas de saldo (não são movimentação real)
+        if (
+            "SALDO ANTERIOR" in desc_norm
+            or "SALDO TOTAL DISPONIVEL DIA" in desc_norm
+            or "SALDO TOTAL DISPONÍVEL DIA" in desc_norm
+            or "SALDO DO DIA" in desc_norm
+        ):
+            continue
+
         valor = parse_numero_br(
             linha.get("Valor")
             or linha.get("VALOR")
@@ -255,7 +268,7 @@ def carregar_extrato_itau_upload(uploaded_file):
         movimentos.append(
             {
                 "data": linha.get("Data") or linha.get("DATA") or linha.get("data"),
-                "descricao": extrair_descricao_linha(linha),
+                "descricao": descricao,
                 "valor": valor,
                 "conta": "Itau",
             }
@@ -272,7 +285,15 @@ def carregar_extrato_pagseguro_upload(uploaded_file):
 
     linhas = ler_arquivo_tabela_upload(uploaded_file)
 
-    for linha in linhas:
+        for linha in linhas:
+        # descrição primeiro
+        descricao = extrair_descricao_linha(linha)
+        desc_norm = normalizar_texto(descricao)
+
+        # linhas de saldo do dia não interessam
+        if "SALDO DO DIA" in desc_norm or "SALDO DIA" in desc_norm:
+            continue
+
         entrada = parse_numero_br(
             linha.get("Entradas") or linha.get("ENTRADAS") or linha.get("entradas") or 0
         )
@@ -297,7 +318,7 @@ def carregar_extrato_pagseguro_upload(uploaded_file):
         movimentos.append(
             {
                 "data": linha.get("Data") or linha.get("DATA") or linha.get("data"),
-                "descricao": extrair_descricao_linha(linha),
+                "descricao": descricao,
                 "valor": valor,
                 "conta": "PagSeguro",
             }
