@@ -36,6 +36,7 @@ def check_auth():
     # Se ainda não autenticou, não libera o app
     st.stop()
 
+
 # ---------- Funções de base ----------
 
 def parse_numero_br(valor):
@@ -351,7 +352,11 @@ def slugify(texto: str) -> str:
 
 st.set_page_config(page_title="Fechamento Tempero das Gurias", layout="wide")
 
+# Checar senha antes de liberar o app
+check_auth()
+
 st.title("Fechamento Mensal - Tempero das Gurias")
+
 
 st.sidebar.header("Parâmetros")
 
@@ -553,4 +558,3 @@ if historico_dir.exists():
                 )
 else:
     st.write("Nenhum fechamento salvo ainda.")
-
