@@ -224,7 +224,7 @@ def carregar_extrato_itau_upload(uploaded_file):
 
     linhas = ler_arquivo_tabela_upload(uploaded_file)
 
-        for linha in linhas:
+    for linha in linhas:
         # extrai descrição primeiro
         descricao = extrair_descricao_linha(linha)
         desc_norm = normalizar_texto(descricao)
@@ -285,7 +285,7 @@ def carregar_extrato_pagseguro_upload(uploaded_file):
 
     linhas = ler_arquivo_tabela_upload(uploaded_file)
 
-        for linha in linhas:
+    for linha in linhas:
         # descrição primeiro
         descricao = extrair_descricao_linha(linha)
         desc_norm = normalizar_texto(descricao)
