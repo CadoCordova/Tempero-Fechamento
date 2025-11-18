@@ -28,7 +28,7 @@ def check_auth():
 
         if senha == senha_correta:
             st.session_state["auth_ok"] = True
-            st.experimental_rerun()  # recarrega já autenticado
+            st.rerun()  # recarrega já autenticado
         else:
             st.error("Senha incorreta. Tente novamente.")
             return False
@@ -323,7 +323,7 @@ def classificar_categoria(mov):
 
 
 def format_currency(valor):
-    return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ",")
+    return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
 def slugify(texto: str) -> str:
