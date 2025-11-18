@@ -8,6 +8,54 @@ from datetime import datetime
 import pandas as pd
 import streamlit as st
 
+from openpyxl.styles import Font, Alignment, PatternFill
+from openpyxl.utils import get_column_letter
+
+
+def formatar_tabela_excel(ws, df, start_row=1):
+    """
+    Aplica estilo básico:
+    - Cabeçalho em negrito, fundo cinza, centralizado
+    - Largura das colunas ajustada
+    - Colunas de valor com formato de moeda
+    """
+    header_row = start_row
+    n_rows = len(df)
+    n_cols = len(df.columns)
+
+    # Cabeçalho
+    for col_idx in range(1, n_cols + 1):
+        cell = ws.cell(row=header_row, column=col_idx)
+        cell.font = Font(bold=True)
+        cell.fill = PatternFill("solid", fgColor="DDDDDD")
+        cell.alignment = Alignment(horizontal="center")
+
+    # Congela linha de cabeçalho
+    ws.freeze_panes = ws[f"A{header_row + 1}"]
+
+    # Ajusta largura das colunas
+    for col_idx, col_name in enumerate(df.columns, start=1):
+        max_len = len(str(col_name))
+        for row_idx in range(header_row + 1, header_row + 1 + n_rows):
+            value = ws.cell(row=row_idx, column=col_idx).value
+            if value is None:
+                continue
+            max_len = max(max_len, len(str(value)))
+        ws.column_dimensions[get_column_letter(col_idx)].width = max_len + 2
+
+    # Aplica formato de moeda para colunas de valor
+    col_names_lower = [str(c).lower() for c in df.columns]
+    for col_idx, col_name in enumerate(col_names_lower, start=1):
+        if any(
+            col_name.startswith(prefix)
+            for prefix in ("entradas", "saídas", "saidas", "resultado", "saldo")
+        ):
+            for row_idx in range(header_row + 1, header_row + 1 + n_rows):
+                cell = ws.cell(row=row_idx, column=col_idx)
+                if isinstance(cell.value, (int, float)):
+                    cell.number_format = '"R$" #,##0.00'
+
+
 # ---------- Autenticação simples por senha (via secrets) ----------
 
 def check_auth():
@@ -487,16 +535,32 @@ if arquivo_itau and arquivo_pag:
         ]
     )
 
-    buffer = BytesIO()
-    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-        df_resumo_contas.to_excel(writer, sheet_name="Resumo", index=False, startrow=0)
-        df_consolidado.to_excel(
-            writer, sheet_name="Resumo", index=False, startrow=len(df_resumo_contas) + 2
-        )
-        df_cat_export.to_excel(writer, sheet_name="Categorias", index=False)
-        df_mov_export.to_excel(writer, sheet_name="Movimentos", index=False)
+buffer = BytesIO()
+with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+    # Escreve as abas
+    df_resumo_contas.to_excel(writer, sheet_name="Resumo", index=False, startrow=0)
+    df_consolidado.to_excel(
+        writer, sheet_name="Resumo", index=False, startrow=len(df_resumo_contas) + 2
+    )
+    df_cat_export.to_excel(writer, sheet_name="Categorias", index=False)
+    df_mov_export.to_excel(writer, sheet_name="Movimentos", index=False)
 
-    buffer.seek(0)
+    # Acessa workbook/worksheets
+    wb = writer.book
+    ws_resumo = writer.sheets["Resumo"]
+    ws_cat = writer.sheets["Categorias"]
+    ws_mov = writer.sheets["Movimentos"]
+
+    # Aplica formatação nas abas de tabelas
+    formatar_tabela_excel(ws_cat, df_cat_export, start_row=1)
+    formatar_tabela_excel(ws_mov, df_mov_export, start_row=1)
+
+    # Resumo tem duas tabelas, formatamos as duas
+    formatar_tabela_excel(ws_resumo, df_resumo_contas, start_row=1)
+    formatar_tabela_excel(ws_resumo, df_consolidado, start_row=len(df_resumo_contas) + 3)
+
+buffer.seek(0)
+
 
     st.subheader("Relatório do período atual")
 
