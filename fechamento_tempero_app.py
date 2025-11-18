@@ -465,7 +465,6 @@ nome_periodo = st.sidebar.text_input(
 
 if arquivo_itau and arquivo_pag:
     # Carrega regras aprendidas (se existirem)
-    global REGRAS_CATEGORIA
     REGRAS_CATEGORIA = carregar_regras()
 
     try:
