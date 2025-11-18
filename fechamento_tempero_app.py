@@ -535,7 +535,159 @@ if arquivo_itau and arquivo_pag:
         ]
     )
 
+    # ---------- Geração do Excel estilizado ----------
     buffer = BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        # escreve as abas
+        start_row_res = 2
+        df_resumo_contas.to_excel(
+            writer, sheet_name="Resumo", index=False, startrow=start_row_res
+        )
+
+        start_row_consol = start_row_res + len(df_resumo_contas) + 2
+        df_consolidado.to_excel(
+            writer, sheet_name="Resumo", index=False, startrow=start_row_consol
+        )
+
+        df_cat_export.to_excel(writer, sheet_name="Categorias", index=False)
+        df_mov_export.to_excel(writer, sheet_name="Movimentos", index=False)
+
+        wb = writer.book
+        ws_res = writer.sheets["Resumo"]
+        ws_cat = writer.sheets["Categorias"]
+        ws_mov = writer.sheets["Movimentos"]
+
+        # Título
+        titulo = f"Fechamento Tempero das Gurias - {nome_periodo}"
+        ws_res["A1"] = titulo
+        ws_res.merge_cells(start_row=1, start_column=1, end_row=1, end_column=4)
+        ws_res["A1"].font = Font(bold=True, size=14)
+        ws_res["A1"].alignment = Alignment(horizontal="left")
+
+        # Estilo de cabeçalho
+        header_fill = PatternFill("solid", fgColor="F2F2F2")
+        header_font = Font(bold=True)
+        thin = Side(border_style="thin", color="DDDDDD")
+
+        def estilizar_header(ws, row_idx: int):
+            for cell in ws[row_idx]:
+                cell.font = header_font
+                cell.fill = header_fill
+                cell.border = Border(top=thin, bottom=thin, left=thin, right=thin)
+
+        resumo_header_row = start_row_res + 1
+        consol_header_row = start_row_consol + 1
+        estilizar_header(ws_res, resumo_header_row)
+        estilizar_header(ws_res, consol_header_row)
+        estilizar_header(ws_cat, 1)
+        estilizar_header(ws_mov, 1)
+
+        # Formatação de moeda
+        resumo_data_start = resumo_header_row + 1
+        resumo_data_end = resumo_data_start + len(df_resumo_contas) - 1
+        for row in ws_res.iter_rows(
+            min_row=resumo_data_start, max_row=resumo_data_end, min_col=2, max_col=4
+        ):
+            for cell in row:
+                if isinstance(cell.value, (int, float)):
+                    cell.number_format = "R$ #,##0.00"
+
+        consol_data_row = consol_header_row + 1
+        for row in ws_res.iter_rows(
+            min_row=consol_data_row, max_row=consol_data_row, min_col=2, max_col=6
+        ):
+            for cell in row:
+                if isinstance(cell.value, (int, float)):
+                    cell.number_format = "R$ #,##0.00"
+
+        for row in ws_cat.iter_rows(min_row=2, min_col=2, max_col=3):
+            for cell in row:
+                if isinstance(cell.value, (int, float)):
+                    cell.number_format = "R$ #,##0.00"
+
+        for row in ws_mov.iter_rows(min_row=2, min_col=5, max_col=5):
+            for cell in row:
+                if isinstance(cell.value, (int, float)):
+                    cell.number_format = "R$ #,##0.00"
+
+        # Auto-ajuste de largura
+        def autofit(ws):
+            for col in ws.columns:
+                max_len = 0
+                col_letter = col[0].column_letter
+                for cell in col:
+                    val = cell.value
+                    if val is not None:
+                        max_len = max(max_len, len(str(val)))
+                ws.column_dimensions[col_letter].width = max_len + 2
+
+        autofit(ws_res)
+        autofit(ws_cat)
+        autofit(ws_mov)
+
+    buffer.seek(0)
+
+    st.subheader("Relatório do período atual")
+
+    col_dl1, col_dl2 = st.columns(2)
+    with col_dl1:
+        st.download_button(
+            label="Baixar relatório Excel (período atual)",
+            data=buffer,
+            file_name="fechamento_tempero.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+    # ---------- Salvar no histórico ----------
+    with col_dl2:
+        salvar = st.button("Salvar no histórico")
+
+    if salvar:
+        historico_dir = Path("fechamentos")
+        historico_dir.mkdir(exist_ok=True)
+        slug = slugify(nome_periodo)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        fname = historico_dir / f"fechamento_tempero_{slug}_{timestamp}.xlsx"
+        with open(fname, "wb") as f:
+            f.write(buffer.getvalue())
+        st.success(f"Relatório salvo no histórico como: {fname.name}")
+
+else:
+    st.info("Envie os arquivos do Itaú e PagSeguro na barra lateral para ver o fechamento.")
+
+# ---------- Histórico de fechamentos ----------
+
+st.subheader("Histórico de Fechamentos Salvos")
+
+historico_dir = Path("fechamentos")
+if historico_dir.exists():
+    arquivos = sorted(
+        [p for p in historico_dir.iterdir() if p.is_file() and p.suffix == ".xlsx"],
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    if not arquivos:
+        st.write("Nenhum fechamento salvo ainda.")
+    else:
+        for arq in arquivos:
+            stats = arq.stat()
+            data_mod = datetime.fromtimestamp(stats.st_mtime).strftime("%Y-%m-%d %H:%M")
+            with open(arq, "rb") as f:
+                data_bin = f.read()
+            col_a, col_b = st.columns([3, 1])
+            with col_a:
+                st.write(f"📄 **{arq.name}** — salvo em {data_mod}")
+            with col_b:
+                st.download_button(
+                    label="Baixar",
+                    data=data_bin,
+                    file_name=arq.name,
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key=f"dl_{arq.name}",
+                )
+else:
+    st.write("Nenhum fechamento salvo ainda.")
+
 with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
     # --- escrever dados nas abas ---
     # Deixa as 2 primeiras linhas para título e espaço
