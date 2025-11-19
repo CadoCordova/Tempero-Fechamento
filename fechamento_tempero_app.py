@@ -21,6 +21,84 @@ CATEGORIAS_PATH = Path("categorias_personalizadas.json")
 REGRAS_CATEGORIA = {}
 
 
+# ---------- Estilo Tempero (rosa médio) ----------
+
+PRIMARY_COLOR = "#F06BAA"     # rosa médio
+BACKGROUND_SOFT = "#FDF2F7"   # rosinha de fundo
+TEXT_DARK = "#333333"
+
+
+def inject_css():
+    st.markdown(
+        f"""
+        <style>
+        .block-container {{
+            max-width: 1200px;
+            padding-top: 1rem;
+            padding-bottom: 2rem;
+        }}
+        body {{
+            background-color: {BACKGROUND_SOFT};
+        }}
+        .tempero-title {{
+            font-size: 2.0rem;
+            font-weight: 800;
+            color: {PRIMARY_COLOR};
+            margin-bottom: 0.2rem;
+        }}
+        .tempero-subtitle {{
+            font-size: 0.95rem;
+            color: #666666;
+            margin-bottom: 1.2rem;
+        }}
+        .tempero-card {{
+            background-color: #FFFFFF;
+            padding: 1.1rem 1.3rem;
+            border-radius: 0.8rem;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.05);
+            margin-bottom: 0.8rem;
+        }}
+        .tempero-metric-card {{
+            background: linear-gradient(135deg, {PRIMARY_COLOR}, #e04592);
+            color: white !important;
+            padding: 0.9rem 1.1rem;
+            border-radius: 0.8rem;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.18);
+        }}
+        .tempero-metric-label {{
+            font-size: 0.85rem;
+            opacity: 0.9;
+        }}
+        .tempero-metric-value {{
+            font-size: 1.4rem;
+            font-weight: 700;
+        }}
+        .tempero-section-title {{
+            font-weight: 700;
+            color: {TEXT_DARK};
+            margin-bottom: 0.4rem;
+        }}
+        .tempero-section-sub {{
+            font-size: 0.85rem;
+            color: #777777;
+            margin-bottom: 0.6rem;
+        }}
+        .stTabs [role="tab"] {{
+            padding: 0.6rem 1rem;
+            border-radius: 999px;
+            color: #555 !important;
+        }}
+        .stTabs [role="tab"][aria-selected="true"] {{
+            background-color: {PRIMARY_COLOR}20 !important;
+            color: {PRIMARY_COLOR} !important;
+            border-bottom-color: transparent !important;
+        }}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 # ---------- Função de formatação genérica para tabelas no Excel ----------
 
 def formatar_tabela_excel(ws, df, start_row=1):
@@ -73,7 +151,9 @@ def check_auth():
     if st.session_state.get("auth_ok"):
         return True
 
-    st.title("Tempero das Gurias - Acesso Restrito")
+    inject_css()
+    st.markdown('<div class="tempero-title">Tempero das Gurias - Acesso Restrito</div>', unsafe_allow_html=True)
+    st.markdown('<div class="tempero-subtitle">Área interna para fechamento financeiro da loja.</div>', unsafe_allow_html=True)
 
     senha = st.text_input("Digite a senha para acessar o sistema:", type="password")
     ok = st.button("Entrar")
@@ -468,15 +548,24 @@ def slugify(texto: str) -> str:
     return s.strip("_") or "periodo"
 
 
-# ---------- Interface Streamlit ----------
+# ---------- Configuração geral Streamlit ----------
 
 st.set_page_config(page_title="Fechamento Tempero das Gurias", layout="wide")
-
+inject_css()
 check_auth()
 
-st.title("Fechamento Mensal - Tempero das Gurias")
+st.markdown(
+    '<div class="tempero-title">💗 Tempero das Gurias — Painel Financeiro</div>',
+    unsafe_allow_html=True,
+)
+st.markdown(
+    '<div class="tempero-subtitle">Fechamento mensal, conferência de categorias e histórico da loja em um único lugar.</div>',
+    unsafe_allow_html=True,
+)
 
-st.sidebar.header("Parâmetros")
+# ---------- Barra lateral ----------
+
+st.sidebar.header("Configurações do período")
 
 arquivo_itau = st.sidebar.file_uploader(
     "Extrato Itaú (.csv ou .xlsx)", type=["csv", "xlsx", "xls"], key="itau"
@@ -496,363 +585,478 @@ nome_periodo = st.sidebar.text_input(
     help='Ex.: "2025-11 1ª quinzena", "2025-10 mês cheio"',
 )
 
+st.sidebar.markdown("---")
+st.sidebar.markdown(
+    "Feito para a **Tempero das Gurias** 💕\n\n"
+    "_Use este painel apenas internamente._"
+)
+
+# ---------- Cálculos principais (compartilhados entre as abas) ----------
+
+dados_carregados = False
+mensagem_erro = None
+
+entradas_totais = saidas_totais = resultado_consolidado = 0.0
+saldo_final = 0.0
+ent_itau = sai_itau = res_itau = 0.0
+ent_pag = sai_pag = res_pag = 0.0
+df_mov = pd.DataFrame()
+df_cat_export = pd.DataFrame()
+df_resumo_contas = pd.DataFrame()
+df_consolidado = pd.DataFrame()
+excel_buffer = None
 
 if arquivo_itau and arquivo_pag:
-    # Carrega regras aprendidas
-    REGRAS_CATEGORIA = carregar_regras()
-
     try:
         saldo_inicial = parse_numero_br(saldo_inicial_input)
     except Exception:
-        st.error("Saldo inicial inválido. Use formato 1234,56 ou 1234.56.")
-        st.stop()
-
-    try:
-        ent_itau, sai_itau, res_itau, mov_itau = carregar_extrato_itau_upload(arquivo_itau)
-        ent_pag, sai_pag, res_pag, mov_pag = carregar_extrato_pagseguro_upload(arquivo_pag)
-    except RuntimeError as e:
-        st.error(str(e))
-        st.stop()
-
-    entradas_totais = ent_itau + ent_pag
-    saidas_totais = sai_itau + sai_pag
-    resultado_consolidado = entradas_totais + saidas_totais
-    saldo_final = saldo_inicial + resultado_consolidado
-
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Entradas totais", format_currency(entradas_totais))
-    col2.metric("Saídas totais", format_currency(saidas_totais))
-    col3.metric("Resultado do período", format_currency(resultado_consolidado))
-
-    st.subheader("Resumo por Conta")
-
-    c1, c2 = st.columns(2)
-    with c1:
-        st.markdown("**Itaú**")
-        st.write("Entradas:", format_currency(ent_itau))
-        st.write("Saídas  :", format_currency(sai_itau))
-        st.write("Resultado:", format_currency(res_itau))
-
-    with c2:
-        st.markdown("**PagSeguro**")
-        st.write("Entradas:", format_currency(ent_pag))
-        st.write("Saídas  :", format_currency(sai_pag))
-        st.write("Resultado:", format_currency(res_pag))
-
-    st.subheader("Consolidado da Loja")
-    st.write("Saldo inicial:", format_currency(saldo_inicial))
-    st.write("Saldo final  :", format_currency(saldo_final))
-
-    # --------- Monta DataFrame de movimentos com categorias ----------
-    movimentos = mov_itau + mov_pag
-    movimentos_cat = []
-    for mov in movimentos:
-        cat = classificar_categoria(mov)
-        v = mov.get("valor", 0.0)
-        movimentos_cat.append(
-            {
-                "Data": mov.get("data"),
-                "Conta": mov.get("conta"),
-                "Descrição": mov.get("descricao"),
-                "Categoria": cat,
-                "Valor": v,
-            }
-        )
-
-    df_mov = pd.DataFrame(movimentos_cat)
-
-    # ---------- Gerenciar categorias (criação de novas) ----------
-    st.subheader("Gerenciar Categorias")
-
-    categorias_padrao = [
-        "Vendas / Receitas",
-        "Fornecedores e Insumos",
-        "Folha de Pagamento",
-        "Aluguel Comercial",
-        "Contabilidade e RH",
-        "Dedetização / Controle de Pragas",
-        "Energia Elétrica",
-        "Motoboy / Entregas",
-        "Nutricionista",
-        "Impostos e Encargos",
-        "Investimentos (Aplicações)",
-        "Rendimentos de Aplicações",
-        "Fatura Cartão",
-        "Transferência Interna / Sócios",
-        "A Classificar",
-    ]
-
-    categorias_custom = carregar_categorias_personalizadas()
-    categorias_possiveis = categorias_padrao + categorias_custom
-
-    nova_cat = st.text_input("Criar nova categoria:")
-    if st.button("Adicionar categoria"):
-        if nova_cat.strip() != "":
-            if nova_cat not in categorias_possiveis:
-                categorias_custom.append(nova_cat)
-                salvar_categorias_personalizadas(categorias_custom)
-                st.success(f"Categoria '{nova_cat}' criada com sucesso!")
-                st.rerun()
-            else:
-                st.warning("Essa categoria já existe.")
-
-    # ---------- Conferência e ajustes de categorias ----------
-    st.subheader("Conferência e ajustes de categorias")
-
-    edited_df = st.data_editor(
-        df_mov,
-        key="editor_movimentos",
-        use_container_width=True,
-        num_rows="fixed",
-        column_config={
-            "Categoria": st.column_config.SelectboxColumn(
-                "Categoria",
-                options=categorias_possiveis,
-                help="Ajuste a categoria se necessário.",
-            )
-        },
-    )
-
-    st.markdown(
-        "_Dica: ajuste as categorias que estiverem erradas e, se quiser que o sistema memorize, "
-        "clique em **Salvar regras de categorização**._"
-    )
-
-    if st.button("Salvar regras de categorização"):
-        regras = carregar_regras()
-        alteracoes = 0
-        for _, row in edited_df.iterrows():
-            desc = row.get("Descrição")
-            cat = row.get("Categoria")
-            if not desc or not cat:
-                continue
-            desc_norm = normalizar_texto(desc)
-            if regras.get(desc_norm) != cat:
-                regras[desc_norm] = cat
-                alteracoes += 1
-        salvar_regras(regras)
-        REGRAS_CATEGORIA = regras
-        st.success(
-            f"{alteracoes} regra(s) de categorização salva(s). "
-            "Nos próximos fechamentos, descrições iguais serão classificadas automaticamente."
-        )
-
-    df_mov_export = edited_df.copy()
-
-    # ---------- Resumo por categoria ----------
-    entradas_cat = defaultdict(float)
-    saidas_cat = defaultdict(float)
-
-    for _, row in df_mov_export.iterrows():
-        cat = row["Categoria"]
-        v = row["Valor"]
-        if v > 0:
-            entradas_cat[cat] += v
-        elif v < 0:
-            saidas_cat[cat] += v
-
-    categorias_calc = sorted(set(list(entradas_cat.keys()) + list(saidas_cat.keys())))
-    dados_cat = []
-    for cat in categorias_calc:
-        dados_cat.append(
-            {
-                "Categoria": cat,
-                "Entradas": entradas_cat.get(cat, 0.0),
-                "Saídas": saidas_cat.get(cat, 0.0),
-            }
-        )
-
-    df_cat_export = pd.DataFrame(dados_cat)
-    df_cat_display = df_cat_export.copy()
-    df_cat_display["Entradas"] = df_cat_display["Entradas"].map(format_currency)
-    df_cat_display["Saídas"] = df_cat_display["Saídas"].map(format_currency)
-
-    st.subheader("Resumo por Categoria")
-    st.dataframe(df_cat_display, use_container_width=True)
-
-    # ---------- DataFrames para relatório ----------
-    df_resumo_contas = pd.DataFrame(
-        [
-            {"Conta": "Itaú", "Entradas": ent_itau, "Saídas": sai_itau, "Resultado": res_itau},
-            {"Conta": "PagSeguro", "Entradas": ent_pag, "Saídas": sai_pag, "Resultado": res_pag},
-        ]
-    )
-    df_consolidado = pd.DataFrame(
-        [
-            {
-                "Nome do período": nome_periodo,
-                "Entradas totais": entradas_totais,
-                "Saídas totais": saidas_totais,
-                "Resultado do período": resultado_consolidado,
-                "Saldo inicial": saldo_inicial,
-                "Saldo final": saldo_final,
-            }
-        ]
-    )
-
-    # ---------- Geração do Excel estilizado ----------
-    buffer = BytesIO()
-    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-        # Aba Resumo
-        start_row_resumo = 3
-        df_resumo_contas.to_excel(
-            writer, sheet_name="Resumo", index=False, startrow=start_row_resumo
-        )
-
-        start_row_consol = start_row_resumo + len(df_resumo_contas) + 3
-        df_consolidado.to_excel(
-            writer, sheet_name="Resumo", index=False, startrow=start_row_consol
-        )
-
-        # Aba técnica para comparativo histórico
-        df_consolidado.to_excel(writer, sheet_name="ResumoDados", index=False)
-
-        # Categorias
-        df_cat_export.to_excel(writer, sheet_name="Categorias", index=False, startrow=1)
-
-        # Movimentos
-        df_mov_export.to_excel(writer, sheet_name="Movimentos", index=False, startrow=1)
-
-        wb = writer.book
-        ws_res = writer.sheets["Resumo"]
-        ws_cat = writer.sheets["Categorias"]
-        ws_mov = writer.sheets["Movimentos"]
-
-        # Título na aba Resumo
-        titulo = f"Fechamento Tempero das Gurias - {nome_periodo}"
-        ws_res["A1"] = titulo
-        ws_res["A1"].font = Font(bold=True, size=14)
-        ws_res["A1"].alignment = Alignment(horizontal="left")
-
-        # Formatar tabelas
-        formatar_tabela_excel(ws_res, df_resumo_contas, start_row=start_row_resumo)
-        formatar_tabela_excel(ws_res, df_consolidado, start_row=start_row_consol)
-        formatar_tabela_excel(ws_cat, df_cat_export, start_row=1)
-        formatar_tabela_excel(ws_mov, df_mov_export, start_row=1)
-
-    buffer.seek(0)
-
-    st.subheader("Relatório do período atual")
-
-    col_dl1, col_dl2 = st.columns(2)
-    with col_dl1:
-        st.download_button(
-            label="Baixar relatório Excel (período atual)",
-            data=buffer,
-            file_name="fechamento_tempero.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
-
-    with col_dl2:
-        salvar = st.button("Salvar no histórico")
-
-    if salvar:
-        historico_dir = Path("fechamentos")
-        historico_dir.mkdir(exist_ok=True)
-        slug = slugify(nome_periodo)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        fname = historico_dir / f"fechamento_tempero_{slug}_{timestamp}.xlsx"
-        with open(fname, "wb") as f:
-            f.write(buffer.getvalue())
-        st.success(f"Relatório salvo no histórico como: {fname.name}")
-
-else:
-    st.info("Envie os arquivos do Itaú e PagSeguro na barra lateral para ver o fechamento.")
-
-
-# ---------- Histórico de Fechamentos e Comparativo ----------
-
-st.subheader("Histórico de Fechamentos Salvos")
-
-historico_dir = Path("fechamentos")
-if historico_dir.exists():
-    arquivos = sorted(
-        [p for p in historico_dir.iterdir() if p.is_file() and p.suffix == ".xlsx"],
-        key=lambda p: p.stat().st_mtime,
-        reverse=True,
-    )
-    if not arquivos:
-        st.write("Nenhum fechamento salvo ainda.")
+        mensagem_erro = "Saldo inicial inválido. Use formato 1234,56 ou 1234.56."
     else:
-        # Lista simples com download
-        for arq in arquivos:
-            stats = arq.stat()
-            data_mod = datetime.fromtimestamp(stats.st_mtime).strftime("%Y-%m-%d %H:%M")
-            with open(arq, "rb") as f:
-                data_bin = f.read()
-            col_a, col_b = st.columns([3, 1])
-            with col_a:
-                st.write(f"📄 **{arq.name}** — salvo em {data_mod}")
-            with col_b:
-                st.download_button(
-                    label="Baixar",
-                    data=data_bin,
-                    file_name=arq.name,
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    key=f"dl_{arq.name}",
-                )
+        try:
+            # carrega regras aprendidas
+            REGRAS_CATEGORIA = carregar_regras()
 
-        # Comparativo analítico
-        st.subheader("Comparativo entre períodos (Histórico Analítico)")
+            ent_itau, sai_itau, res_itau, mov_itau = carregar_extrato_itau_upload(arquivo_itau)
+            ent_pag, sai_pag, res_pag, mov_pag = carregar_extrato_pagseguro_upload(arquivo_pag)
 
-        resumos = []
-        for arq in arquivos:
-            try:
-                # Tenta ler aba técnica
-                try:
-                    df_consol = pd.read_excel(arq, sheet_name="ResumoDados")
-                except Exception:
-                    df_res = pd.read_excel(arq, sheet_name="Resumo")
-                    if "Nome do período" not in df_res.columns:
-                        continue
-                    df_consol = df_res[df_res["Nome do período"].notna()]
-                    if df_consol.empty:
-                        continue
+            entradas_totais = ent_itau + ent_pag
+            saidas_totais = sai_itau + sai_pag
+            resultado_consolidado = entradas_totais + saidas_totais
+            saldo_final = saldo_inicial + resultado_consolidado
 
-                linha = df_consol.iloc[0]
-                periodo = str(linha.get("Nome do período", arq.name))
-                entradas = float(linha.get("Entradas totais", 0.0))
-                saidas = float(linha.get("Saídas totais", 0.0))
-                resultado = float(linha.get("Resultado do período", 0.0))
-                saldo_final_val = linha.get("Saldo final", None)
-                saldo_final = float(saldo_final_val) if saldo_final_val is not None else None
-
-                resumos.append(
+            movimentos = mov_itau + mov_pag
+            movimentos_cat = []
+            for mov in movimentos:
+                cat = classificar_categoria(mov)
+                v = mov.get("valor", 0.0)
+                movimentos_cat.append(
                     {
-                        "Período": periodo,
-                        "Entradas": entradas,
-                        "Saídas": saidas,
-                        "Resultado": resultado,
-                        "Saldo final": saldo_final,
+                        "Data": mov.get("data"),
+                        "Conta": mov.get("conta"),
+                        "Descrição": mov.get("descricao"),
+                        "Categoria": cat,
+                        "Valor": v,
                     }
                 )
-            except Exception:
-                continue
 
-        if not resumos:
-            st.info(
-                "Ainda não foi possível montar o comparativo. "
-                "Gere e salve alguns fechamentos no novo formato."
+            df_mov = pd.DataFrame(movimentos_cat)
+
+            # resumo por categoria
+            entradas_cat = defaultdict(float)
+            saidas_cat = defaultdict(float)
+            for _, row in df_mov.iterrows():
+                cat = row["Categoria"]
+                v = row["Valor"]
+                if v > 0:
+                    entradas_cat[cat] += v
+                elif v < 0:
+                    saidas_cat[cat] += v
+
+            categorias_calc = sorted(set(list(entradas_cat.keys()) + list(saidas_cat.keys())))
+            dados_cat = []
+            for cat in categorias_calc:
+                dados_cat.append(
+                    {
+                        "Categoria": cat,
+                        "Entradas": entradas_cat.get(cat, 0.0),
+                        "Saídas": saidas_cat.get(cat, 0.0),
+                    }
+                )
+
+            df_cat_export = pd.DataFrame(dados_cat)
+
+            # resumos
+            df_resumo_contas = pd.DataFrame(
+                [
+                    {"Conta": "Itaú", "Entradas": ent_itau, "Saídas": sai_itau, "Resultado": res_itau},
+                    {"Conta": "PagSeguro", "Entradas": ent_pag, "Saídas": sai_pag, "Resultado": res_pag},
+                ]
             )
+            df_consolidado = pd.DataFrame(
+                [
+                    {
+                        "Nome do período": nome_periodo,
+                        "Entradas totais": entradas_totais,
+                        "Saídas totais": saidas_totais,
+                        "Resultado do período": resultado_consolidado,
+                        "Saldo inicial": saldo_inicial,
+                        "Saldo final": saldo_final,
+                    }
+                ]
+            )
+
+            # gera excel já aqui para ser usado na aba de fechamento
+            buffer = BytesIO()
+            with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+                start_row_resumo = 3
+                df_resumo_contas.to_excel(
+                    writer, sheet_name="Resumo", index=False, startrow=start_row_resumo
+                )
+
+                start_row_consol = start_row_resumo + len(df_resumo_contas) + 3
+                df_consolidado.to_excel(
+                    writer, sheet_name="Resumo", index=False, startrow=start_row_consol
+                )
+
+                # aba técnica
+                df_consolidado.to_excel(writer, sheet_name="ResumoDados", index=False)
+
+                # Categorias
+                df_cat_export.to_excel(writer, sheet_name="Categorias", index=False, startrow=1)
+
+                # Movimentos
+                df_mov.to_excel(writer, sheet_name="Movimentos", index=False, startrow=1)
+
+                wb = writer.book
+                ws_res = writer.sheets["Resumo"]
+                ws_cat = writer.sheets["Categorias"]
+                ws_mov = writer.sheets["Movimentos"]
+
+                titulo = f"Fechamento Tempero das Gurias - {nome_periodo}"
+                ws_res["A1"] = titulo
+                ws_res["A1"].font = Font(bold=True, size=14)
+                ws_res["A1"].alignment = Alignment(horizontal="left")
+
+                formatar_tabela_excel(ws_res, df_resumo_contas, start_row=start_row_resumo)
+                formatar_tabela_excel(ws_res, df_consolidado, start_row=start_row_consol)
+                formatar_tabela_excel(ws_cat, df_cat_export, start_row=1)
+                formatar_tabela_excel(ws_mov, df_mov, start_row=1)
+
+            buffer.seek(0)
+            excel_buffer = buffer
+
+            dados_carregados = True
+
+        except RuntimeError as e:
+            mensagem_erro = str(e)
+
+
+# ---------- Abas ----------
+
+tab1, tab2, tab3 = st.tabs(
+    ["💗 Fechamento Mensal", "🧾 Conferência & Categorias", "📊 Histórico & Comparativos"]
+)
+
+# ---------- ABA 1: Fechamento ----------
+
+with tab1:
+    st.markdown('<div class="tempero-section-title">Resumo do período</div>', unsafe_allow_html=True)
+
+    if mensagem_erro:
+        st.error(mensagem_erro)
+    elif not dados_carregados:
+        st.info("Envie os arquivos do Itaú e PagSeguro na barra lateral para ver o fechamento.")
+    else:
+        m1, m2, m3 = st.columns(3)
+        with m1:
+            st.markdown(
+                f"""
+                <div class="tempero-metric-card">
+                  <div class="tempero-metric-label">Entradas totais</div>
+                  <div class="tempero-metric-value">{format_currency(entradas_totais)}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+        with m2:
+            st.markdown(
+                f"""
+                <div class="tempero-metric-card">
+                  <div class="tempero-metric-label">Saídas totais</div>
+                  <div class="tempero-metric-value">{format_currency(saidas_totais)}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+        with m3:
+            st.markdown(
+                f"""
+                <div class="tempero-metric-card">
+                  <div class="tempero-metric-label">Resultado do período</div>
+                  <div class="tempero-metric-value">{format_currency(resultado_consolidado)}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+        st.markdown("---")
+
+        # Resumo por conta
+        st.markdown(
+            '<div class="tempero-section-title">📑 Resumo por conta</div>',
+            unsafe_allow_html=True,
+        )
+        with st.container():
+            col_a, col_b = st.columns(2)
+            with col_a:
+                st.markdown('<div class="tempero-card">', unsafe_allow_html=True)
+                st.markdown("**Itaú**")
+                st.write("Entradas:", format_currency(ent_itau))
+                st.write("Saídas  :", format_currency(sai_itau))
+                st.write("Resultado:", format_currency(res_itau))
+                st.markdown("</div>", unsafe_allow_html=True)
+
+            with col_b:
+                st.markdown('<div class="tempero-card">', unsafe_allow_html=True)
+                st.markdown("**PagSeguro**")
+                st.write("Entradas:", format_currency(ent_pag))
+                st.write("Saídas  :", format_currency(sai_pag))
+                st.write("Resultado:", format_currency(res_pag))
+                st.markdown("</div>", unsafe_allow_html=True)
+
+        # Consolidado
+        st.markdown(
+            '<div class="tempero-section-title">🏁 Consolidado da loja</div>',
+            unsafe_allow_html=True,
+        )
+        st.markdown('<div class="tempero-card">', unsafe_allow_html=True)
+        st.write("Saldo inicial:", format_currency(saldo_inicial))
+        st.write("Saldo final  :", format_currency(saldo_final))
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        # Resumo por categoria (somente visual aqui)
+        st.markdown(
+            '<div class="tempero-section-title">📌 Resumo por categoria</div>',
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            '<div class="tempero-section-sub">Baseado nas categorias atuais (já considera regras salvas anteriormente).</div>',
+            unsafe_allow_html=True,
+        )
+        df_cat_display = df_cat_export.copy()
+        if not df_cat_display.empty:
+            df_cat_display["Entradas"] = df_cat_display["Entradas"].map(format_currency)
+            df_cat_display["Saídas"] = df_cat_display["Saídas"].map(format_currency)
+        st.dataframe(df_cat_display, use_container_width=True)
+
+        # Relatório
+        st.markdown(
+            '<div class="tempero-section-title">📥 Relatório do período atual</div>',
+            unsafe_allow_html=True,
+        )
+        st.markdown('<div class="tempero-card">', unsafe_allow_html=True)
+        col_dl1, col_dl2 = st.columns(2)
+        with col_dl1:
+            st.download_button(
+                label="Baixar relatório Excel (período atual)",
+                data=excel_buffer,
+                file_name="fechamento_tempero.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+
+        with col_dl2:
+            salvar = st.button("Salvar no histórico")
+
+        if salvar:
+            historico_dir = Path("fechamentos")
+            historico_dir.mkdir(exist_ok=True)
+            slug = slugify(nome_periodo)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            fname = historico_dir / f"fechamento_tempero_{slug}_{timestamp}.xlsx"
+            with open(fname, "wb") as f:
+                f.write(excel_buffer.getvalue())
+            st.success(f"Relatório salvo no histórico como: {fname.name}")
+        st.markdown("</div>", unsafe_allow_html=True)
+
+
+# ---------- ABA 2: Conferência & Categorias ----------
+
+with tab2:
+    st.markdown(
+        '<div class="tempero-section-title">🧾 Conferência de lançamentos e categorias</div>',
+        unsafe_allow_html=True,
+    )
+
+    if not dados_carregados:
+        st.info("Envie os arquivos do Itaú e PagSeguro na barra lateral para conferir as categorias.")
+    else:
+        # Gerenciar categorias
+        st.markdown('<div class="tempero-card">', unsafe_allow_html=True)
+        st.markdown("**Gerenciar categorias**")
+
+        categorias_padrao = [
+            "Vendas / Receitas",
+            "Fornecedores e Insumos",
+            "Folha de Pagamento",
+            "Aluguel Comercial",
+            "Contabilidade e RH",
+            "Dedetização / Controle de Pragas",
+            "Energia Elétrica",
+            "Motoboy / Entregas",
+            "Nutricionista",
+            "Impostos e Encargos",
+            "Investimentos (Aplicações)",
+            "Rendimentos de Aplicações",
+            "Fatura Cartão",
+            "Transferência Interna / Sócios",
+            "A Classificar",
+        ]
+
+        categorias_custom = carregar_categorias_personalizadas()
+        categorias_possiveis = categorias_padrao + categorias_custom
+
+        col_nc1, col_nc2 = st.columns([2, 1])
+        with col_nc1:
+            nova_cat = st.text_input("Criar nova categoria:")
+        with col_nc2:
+            if st.button("Adicionar categoria"):
+                if nova_cat.strip() != "":
+                    if nova_cat not in categorias_possiveis:
+                        categorias_custom.append(nova_cat)
+                        salvar_categorias_personalizadas(categorias_custom)
+                        st.success(f"Categoria '{nova_cat}' criada com sucesso!")
+                        st.rerun()
+                    else:
+                        st.warning("Essa categoria já existe.")
+
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        # Editor de movimentos
+        st.markdown('<div class="tempero-card">', unsafe_allow_html=True)
+        st.markdown("**Conferência de lançamentos**")
+        st.markdown(
+            '<div class="tempero-section-sub">Ajuste as categorias linha a linha, se necessário. '
+            'Ao salvar as regras, o sistema aprende para os próximos fechamentos.</div>',
+            unsafe_allow_html=True,
+        )
+
+        edited_df = st.data_editor(
+            df_mov,
+            key="editor_movimentos",
+            use_container_width=True,
+            num_rows="fixed",
+            column_config={
+                "Categoria": st.column_config.SelectboxColumn(
+                    "Categoria",
+                    options=categorias_possiveis,
+                    help="Ajuste a categoria se necessário.",
+                )
+            },
+        )
+
+        if st.button("Salvar regras de categorização"):
+            regras = carregar_regras()
+            alteracoes = 0
+            for _, row in edited_df.iterrows():
+                desc = row.get("Descrição")
+                cat = row.get("Categoria")
+                if not desc or not cat:
+                    continue
+                desc_norm = normalizar_texto(desc)
+                if regras.get(desc_norm) != cat:
+                    regras[desc_norm] = cat
+                    alteracoes += 1
+            salvar_regras(regras)
+            st.success(
+                f"{alteracoes} regra(s) de categorização salva(s). "
+                "Os próximos fechamentos já virão com essas categorias aplicadas."
+            )
+            st.rerun()
+
+        st.markdown("</div>", unsafe_allow_html=True)
+
+
+# ---------- ABA 3: Histórico & Comparativos ----------
+
+with tab3:
+    st.markdown(
+        '<div class="tempero-section-title">📊 Histórico de fechamentos e comparativo</div>',
+        unsafe_allow_html=True,
+    )
+
+    historico_dir = Path("fechamentos")
+    if historico_dir.exists():
+        arquivos = sorted(
+            [p for p in historico_dir.iterdir() if p.is_file() and p.suffix == ".xlsx"],
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        if not arquivos:
+            st.write("Nenhum fechamento salvo ainda.")
         else:
-            df_hist = pd.DataFrame(resumos)
-
-            # Ordena do mais antigo para o mais recente
-            df_hist = df_hist.iloc[::-1].reset_index(drop=True)
-
-            df_display = df_hist.copy()
-            for col in ["Entradas", "Saídas", "Resultado", "Saldo final"]:
-                if col in df_display.columns:
-                    df_display[col] = df_display[col].apply(
-                        lambda x: format_currency(x) if pd.notna(x) else "-"
+            # Lista de arquivos
+            st.markdown("**Fechamentos salvos**")
+            st.markdown('<div class="tempero-card">', unsafe_allow_html=True)
+            for arq in arquivos:
+                stats = arq.stat()
+                data_mod = datetime.fromtimestamp(stats.st_mtime).strftime("%Y-%m-%d %H:%M")
+                with open(arq, "rb") as f:
+                    data_bin = f.read()
+                col_a, col_b = st.columns([3, 1])
+                with col_a:
+                    st.write(f"📄 **{arq.name}** — salvo em {data_mod}")
+                with col_b:
+                    st.download_button(
+                        label="Baixar",
+                        data=data_bin,
+                        file_name=arq.name,
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key=f"dl_{arq.name}",
                     )
+            st.markdown("</div>", unsafe_allow_html=True)
 
-            st.write("Tabela comparativa:")
-            st.dataframe(df_display, use_container_width=True)
+            # Comparativo
+            st.markdown("**Comparativo entre períodos (Histórico Analítico)**")
+            st.markdown(
+                '<div class="tempero-section-sub">Baseado nos relatórios salvos no histórico.</div>',
+                unsafe_allow_html=True,
+            )
 
-            st.write("Resultado por período:")
-            chart_df = df_hist.set_index("Período")[["Resultado"]]
-            st.bar_chart(chart_df)
+            resumos = []
+            for arq in arquivos:
+                try:
+                    # Tenta ler aba técnica
+                    try:
+                        df_consol = pd.read_excel(arq, sheet_name="ResumoDados")
+                    except Exception:
+                        df_res = pd.read_excel(arq, sheet_name="Resumo")
+                        if "Nome do período" not in df_res.columns:
+                            continue
+                        df_consol = df_res[df_res["Nome do período"].notna()]
+                        if df_consol.empty:
+                            continue
 
-else:
-    st.write("Nenhum fechamento salvo ainda.")
+                    linha = df_consol.iloc[0]
+                    periodo = str(linha.get("Nome do período", arq.name))
+                    entradas = float(linha.get("Entradas totais", 0.0))
+                    saidas = float(linha.get("Saídas totais", 0.0))
+                    resultado = float(linha.get("Resultado do período", 0.0))
+                    saldo_final_val = linha.get("Saldo final", None)
+                    saldo_final_hist = float(saldo_final_val) if saldo_final_val is not None else None
+
+                    resumos.append(
+                        {
+                            "Período": periodo,
+                            "Entradas": entradas,
+                            "Saídas": saidas,
+                            "Resultado": resultado,
+                            "Saldo final": saldo_final_hist,
+                        }
+                    )
+                except Exception:
+                    continue
+
+            if not resumos:
+                st.info(
+                    "Ainda não foi possível montar o comparativo. "
+                    "Gere e salve alguns fechamentos no novo formato."
+                )
+            else:
+                df_hist = pd.DataFrame(resumos)
+                df_hist = df_hist.iloc[::-1].reset_index(drop=True)
+
+                df_display = df_hist.copy()
+                for col in ["Entradas", "Saídas", "Resultado", "Saldo final"]:
+                    if col in df_display.columns:
+                        df_display[col] = df_display[col].apply(
+                            lambda x: format_currency(x) if pd.notna(x) else "-"
+                        )
+
+                st.dataframe(df_display, use_container_width=True)
+
+                st.markdown("**Resultado por período:**")
+                chart_df = df_hist.set_index("Período")[["Resultado"]]
+                st.bar_chart(chart_df)
+
+    else:
+        st.write("Nenhum fechamento salvo ainda.")
