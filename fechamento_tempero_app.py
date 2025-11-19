@@ -283,18 +283,79 @@ def extrair_descricao_linha(linha: dict):
 
 
 def ler_arquivo_tabela_upload(uploaded_file):
+    """
+    Lê CSV/XLSX de bancos (Itaú, PagSeguro etc) aceitando o extrato ORIGINAL,
+    mesmo com cabeçalho e informações antes da tabela.
+
+    Regra:
+    - Procura a linha que contém 'Data' e alguma coluna típica
+      ('Lançamento', 'Descrição', 'Tipo'...) e usa essa linha como cabeçalho.
+    """
     suffix = Path(uploaded_file.name).suffix.lower()
 
+    # --- CSV normal ---------------------------------------------------------
     if suffix in (".csv", ".txt"):
         df = pd.read_csv(uploaded_file, sep=";")
+
+    # --- Excel (Itaú, PagSeguro etc) ----------------------------------------
     elif suffix in (".xlsx", ".xls"):
-        df = pd.read_excel(uploaded_file)
+        # Lê tudo sem cabeçalho para poder localizar a linha real de header
+        raw = pd.read_excel(uploaded_file, header=None)
+
+        header_idx = None
+        for i, row in raw.iterrows():
+            # normaliza valores da linha para maiúsculo, ignorando NaN
+            valores = [
+                str(x).strip().upper()
+                for x in row.tolist()
+                if not pd.isna(x)
+            ]
+            if not valores:
+                continue
+
+            # Linha candidata a cabeçalho: TEM "DATA" + (LANÇAMENTO / DESCRIÇÃO / TIPO)
+            if "DATA" in valores and any(
+                col in valores
+                for col in [
+                    "LANÇAMENTO",
+                    "LANCAMENTO",
+                    "LANÇAMENTOS",
+                    "DESCRIÇÃO",
+                    "DESCRICAO",
+                    "TIPO",
+                ]
+            ):
+                header_idx = i
+                break
+
+        if header_idx is not None:
+            # Monta os nomes das colunas a partir dessa linha
+            header_row = raw.iloc[header_idx].tolist()
+            cols = []
+            for v in header_row:
+                if isinstance(v, str):
+                    cols.append(v.strip())
+                elif pd.isna(v):
+                    cols.append("")
+                else:
+                    cols.append(str(v))
+
+            # Dados = tudo que vem depois do cabeçalho
+            df = raw.iloc[header_idx + 1 :].copy()
+            df.columns = cols
+            df = df.dropna(how="all").reset_index(drop=True)
+        else:
+            # fallback: comportamento antigo (caso o arquivo já venha limpo)
+            df = pd.read_excel(uploaded_file)
+
     else:
         raise RuntimeError(f"Formato não suportado: {suffix}. Use .csv ou .xlsx.")
 
+    # normaliza nomes das colunas
     df = df.rename(columns=lambda c: str(c).strip())
-    records = df.to_dict(orient="records")
 
+    # transforma em lista de dicionários como antes
+    records = df.to_dict(orient="records")
     linhas = []
     for rec in records:
         nova_linha = {}
@@ -303,6 +364,7 @@ def ler_arquivo_tabela_upload(uploaded_file):
                 k = k.strip()
             nova_linha[k] = v
         linhas.append(nova_linha)
+
     return linhas
 
 
