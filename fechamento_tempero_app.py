@@ -708,10 +708,10 @@ if arquivo_itau and arquivo_pag:
     # ---------- Geração do Excel estilizado ----------
     buffer = BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-    start_row_resumo = 3
-    df_resumo_contas.to_excel(
-        writer, sheet_name="Resumo", index=False, startrow=start_row_resumo
-    )
+		start_row_resumo = 3
+			df_resumo_contas.to_excel(
+			writer, sheet_name="Resumo", index=False, startrow=start_row_resumo
+		)
 
     start_row_consol = start_row_resumo + len(df_resumo_contas) + 3
     df_consolidado.to_excel(
