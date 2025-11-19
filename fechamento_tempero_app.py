@@ -150,31 +150,38 @@ def formatar_tabela_excel(ws, df, start_row=1):
 # ---------- Autenticação simples por senha (via secrets) ----------
 
 def check_auth():
+    # Se já autenticou em uma execução anterior, segue o fluxo normal
     if st.session_state.get("auth_ok"):
-        return True
+        return
 
+    # Tela de login
     inject_css()
-    st.markdown('<div class="tempero-title">Tempero das Gurias - Acesso Restrito</div>', unsafe_allow_html=True)
-    st.markdown('<div class="tempero-subtitle">Área interna para fechamento financeiro da loja.</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="tempero-title">Tempero das Gurias - Acesso Restrito</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<div class="tempero-subtitle">Área interna para fechamento financeiro da loja.</div>',
+        unsafe_allow_html=True,
+    )
 
     senha = st.text_input("Digite a senha para acessar o sistema:", type="password")
     ok = st.button("Entrar")
 
     if ok:
         senha_correta = st.secrets.get("APP_PASSWORD")
+
         if senha_correta is None:
             st.error("Senha não configurada no Streamlit Secrets (APP_PASSWORD).")
-            return False
-
-        if senha == senha_correta:
+        elif senha == senha_correta:
+            # Marca como autenticado e recarrega a página
             st.session_state["auth_ok"] = True
             st.rerun()
         else:
             st.error("Senha incorreta. Tente novamente.")
-            return False
 
+    # Se chegou aqui, ainda não está autenticado -> interrompe o app
     st.stop()
-
 
 # ---------- Funções de base ----------
 
