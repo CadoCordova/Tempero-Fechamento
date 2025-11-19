@@ -184,6 +184,7 @@ def check_auth():
     # Se chegou aqui, ainda não está autenticado -> interrompe o app
     st.stop()
 
+
 # ---------- Funções de base ----------
 
 def parse_numero_br(valor):
@@ -598,7 +599,7 @@ nome_periodo = st.sidebar.text_input(
 st.sidebar.markdown("---")
 st.sidebar.markdown(
     "Feito para a **Tempero das Gurias** 💕\n\n"
-##"_Use este painel apenas internamente._"
+    ##"_Use este painel apenas internamente._"
 )
 
 # ---------- Cálculos principais (compartilhados entre as abas) ----------
@@ -981,9 +982,10 @@ with tab3:
             key=lambda p: p.stat().st_mtime,
             reverse=True,
         )
+
         if not arquivos:
             st.write("Nenhum fechamento salvo ainda.")
-		else:
+        else:
             # Lista de arquivos
             st.markdown("**Fechamentos salvos**")
             st.markdown('<div class="tempero-card">', unsafe_allow_html=True)
@@ -1017,14 +1019,12 @@ with tab3:
                         try:
                             arq.unlink()  # remove o arquivo do disco
                             st.success(f"Arquivo **{nome}** excluído com sucesso!")
-                            # se você tiver importado time, pode usar:
-                            # time.sleep(0.7)
+                            time.sleep(0.6)
                             st.experimental_rerun()  # recarrega a página
                         except Exception as e:
                             st.error(f"Erro ao excluir {nome}: {e}")
 
             st.markdown("</div>", unsafe_allow_html=True)
-
 
             # Comparativo
             st.markdown("**Comparativo entre períodos (Histórico Analítico)**")
