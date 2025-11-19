@@ -708,36 +708,23 @@ if arquivo_itau and arquivo_pag:
     # ---------- Geração do Excel estilizado ----------
     buffer = BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-        # Deixa espaço para título na aba Resumo
-        start_row_resumo = 3
-        df_resumo_contas.to_excel(
-            writer, sheet_name="Resumo", index=False, startrow=start_row_resumo
-        )
+    start_row_resumo = 3
+    df_resumo_contas.to_excel(
+        writer, sheet_name="Resumo", index=False, startrow=start_row_resumo
+    )
 
-        start_row_consol = start_row_resumo + len(df_resumo_contas) + 3
-        df_consolidado.to_excel(
-            writer, sheet_name="Resumo", index=False, startrow=start_row_consol
-        )
+    start_row_consol = start_row_resumo + len(df_resumo_contas) + 3
+    df_consolidado.to_excel(
+        writer, sheet_name="Resumo", index=False, startrow=start_row_consol
+    )
 
-        df_cat_export.to_excel(writer, sheet_name="Categorias", index=False, startrow=1)
-        df_mov_export.to_excel(writer, sheet_name="Movimentos", index=False, startrow=1)
+    # 🔹 NOVO: aba técnica só com os dados consolidados, para o histórico analítico
+    df_consolidado.to_excel(writer, sheet_name="ResumoDados", index=False)
 
-        wb = writer.book
-        ws_res = writer.sheets["Resumo"]
-        ws_cat = writer.sheets["Categorias"]
-        ws_mov = writer.sheets["Movimentos"]
+    df_cat_export.to_excel(writer, sheet_name="Categorias", index=False, startrow=1)
+    df_mov_export.to_excel(writer, sheet_name="Movimentos", index=False, startrow=1)
+    ...
 
-        # Título na aba Resumo
-        titulo = f"Fechamento Tempero das Gurias - {nome_periodo}"
-        ws_res["A1"] = titulo
-        ws_res["A1"].font = Font(bold=True, size=14)
-        ws_res["A1"].alignment = Alignment(horizontal="left")
-
-        # Formatar tabelas
-        formatar_tabela_excel(ws_res, df_resumo_contas, start_row=start_row_resumo)
-        formatar_tabela_excel(ws_res, df_consolidado, start_row=start_row_consol)
-        formatar_tabela_excel(ws_cat, df_cat_export, start_row=1)
-        formatar_tabela_excel(ws_mov, df_mov_export, start_row=1)
 
     buffer.seek(0)
 
@@ -805,18 +792,20 @@ if historico_dir.exists():
         # ---------- Comparativo analítico entre períodos ----------
         st.subheader("Comparativo entre períodos (Histórico Analítico)")
 
-        resumos = []
+                resumos = []
         for arq in arquivos:
             try:
-                # Lê a aba "Resumo" do Excel
-                df_res = pd.read_excel(arq, sheet_name="Resumo")
-
-                # Pega a linha onde existe "Nome do período"
-                if "Nome do período" not in df_res.columns:
-                    continue
-                df_consol = df_res[df_res["Nome do período"].notna()]
-                if df_consol.empty:
-                    continue
+                # 1) Tenta ler a aba técnica nova (ResumoDados)
+                try:
+                    df_consol = pd.read_excel(arq, sheet_name="ResumoDados")
+                except Exception:
+                    # 2) Compatibilidade com arquivos antigos (tenta extrair da aba Resumo)
+                    df_res = pd.read_excel(arq, sheet_name="Resumo")
+                    if "Nome do período" not in df_res.columns:
+                        continue
+                    df_consol = df_res[df_res["Nome do período"].notna()]
+                    if df_consol.empty:
+                        continue
 
                 linha = df_consol.iloc[0]
                 periodo = str(linha.get("Nome do período", arq.name))
@@ -836,8 +825,9 @@ if historico_dir.exists():
                     }
                 )
             except Exception:
-                # se algum arquivo estiver em formato antigo ou diferente, só pula
+                # se der erro em algum arquivo, só pula
                 continue
+
 
         if not resumos:
             st.info("Ainda não foi possível montar o comparativo. Gere e salve alguns fechamentos no novo formato.")
