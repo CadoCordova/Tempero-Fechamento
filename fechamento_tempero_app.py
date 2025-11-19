@@ -4,6 +4,7 @@ from pathlib import Path
 from io import BytesIO
 from datetime import datetime
 import json
+import time
 
 import pandas as pd
 import streamlit as st
@@ -982,27 +983,48 @@ with tab3:
         )
         if not arquivos:
             st.write("Nenhum fechamento salvo ainda.")
-        else:
+		else:
             # Lista de arquivos
             st.markdown("**Fechamentos salvos**")
             st.markdown('<div class="tempero-card">', unsafe_allow_html=True)
+
             for arq in arquivos:
+                nome = arq.name
                 stats = arq.stat()
                 data_mod = datetime.fromtimestamp(stats.st_mtime).strftime("%Y-%m-%d %H:%M")
-                with open(arq, "rb") as f:
-                    data_bin = f.read()
-                col_a, col_b = st.columns([3, 1])
+
+                col_a, col_b, col_c = st.columns([5, 1, 1])
+
+                # Nome + data
                 with col_a:
-                    st.write(f"📄 **{arq.name}** — salvo em {data_mod}")
+                    st.write(f"📄 **{nome}**")
+                    st.caption(f"salvo em {data_mod}")
+
+                # Botão Baixar
                 with col_b:
-                    st.download_button(
-                        label="Baixar",
-                        data=data_bin,
-                        file_name=arq.name,
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        key=f"dl_{arq.name}",
-                    )
+                    with open(arq, "rb") as fbin:
+                        st.download_button(
+                            label="Baixar",
+                            data=fbin,
+                            file_name=nome,
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            key=f"baixar_{nome}",
+                        )
+
+                # Botão Excluir
+                with col_c:
+                    if st.button("Excluir", key=f"excluir_{nome}"):
+                        try:
+                            arq.unlink()  # remove o arquivo do disco
+                            st.success(f"Arquivo **{nome}** excluído com sucesso!")
+                            # se você tiver importado time, pode usar:
+                            # time.sleep(0.7)
+                            st.experimental_rerun()  # recarrega a página
+                        except Exception as e:
+                            st.error(f"Erro ao excluir {nome}: {e}")
+
             st.markdown("</div>", unsafe_allow_html=True)
+
 
             # Comparativo
             st.markdown("**Comparativo entre períodos (Histórico Analítico)**")
