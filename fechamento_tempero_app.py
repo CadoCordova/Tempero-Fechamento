@@ -784,6 +784,7 @@ if historico_dir.exists():
     if not arquivos:
         st.write("Nenhum fechamento salvo ainda.")
     else:
+        # Lista simples com nome + data + botão de download (como antes)
         for arq in arquivos:
             stats = arq.stat()
             data_mod = datetime.fromtimestamp(stats.st_mtime).strftime("%Y-%m-%d %H:%M")
@@ -800,5 +801,66 @@ if historico_dir.exists():
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     key=f"dl_{arq.name}",
                 )
+
+        # ---------- Comparativo analítico entre períodos ----------
+        st.subheader("Comparativo entre períodos (Histórico Analítico)")
+
+        resumos = []
+        for arq in arquivos:
+            try:
+                # Lê a aba "Resumo" do Excel
+                df_res = pd.read_excel(arq, sheet_name="Resumo")
+
+                # Pega a linha onde existe "Nome do período"
+                if "Nome do período" not in df_res.columns:
+                    continue
+                df_consol = df_res[df_res["Nome do período"].notna()]
+                if df_consol.empty:
+                    continue
+
+                linha = df_consol.iloc[0]
+                periodo = str(linha.get("Nome do período", arq.name))
+                entradas = float(linha.get("Entradas totais", 0.0))
+                saidas = float(linha.get("Saídas totais", 0.0))
+                resultado = float(linha.get("Resultado do período", 0.0))
+                saldo_final_val = linha.get("Saldo final", None)
+                saldo_final = float(saldo_final_val) if saldo_final_val is not None else None
+
+                resumos.append(
+                    {
+                        "Período": periodo,
+                        "Entradas": entradas,
+                        "Saídas": saidas,
+                        "Resultado": resultado,
+                        "Saldo final": saldo_final,
+                    }
+                )
+            except Exception:
+                # se algum arquivo estiver em formato antigo ou diferente, só pula
+                continue
+
+        if not resumos:
+            st.info("Ainda não foi possível montar o comparativo. Gere e salve alguns fechamentos no novo formato.")
+        else:
+            df_hist = pd.DataFrame(resumos)
+
+            # Ordena do mais antigo pro mais recente (pra ficar lógico no gráfico)
+            df_hist = df_hist.iloc[::-1].reset_index(drop=True)
+
+            df_display = df_hist.copy()
+            for col in ["Entradas", "Saídas", "Resultado", "Saldo final"]:
+                if col in df_display.columns:
+                    df_display[col] = df_display[col].apply(
+                        lambda x: format_currency(x) if pd.notna(x) else "-"
+                    )
+
+            st.write("Tabela comparativa:")
+            st.dataframe(df_display, use_container_width=True)
+
+            # Gráfico do resultado por período
+            st.write("Resultado por período:")
+            chart_df = df_hist.set_index("Período")[["Resultado"]]
+            st.bar_chart(chart_df)
+
 else:
     st.write("Nenhum fechamento salvo ainda.")
