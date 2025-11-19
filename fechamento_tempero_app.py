@@ -45,9 +45,9 @@ def formatar_tabela_excel(ws, df, start_row=1):
     ws.freeze_panes = ws[f"A{header_row + 1}"]
 
     # Ajusta largura das colunas
-    for col_idx, col_name in enumerate(df.columns, start=1):
-        max_len = len(str(col_name))
-        for row_idx in range(header_row + 1, header_row + 1 + n_rows):
+    for col_idx, _ in enumerate(df.columns, start=1):
+        max_len = 0
+        for row_idx in range(header_row, header_row + 1 + n_rows):
             value = ws.cell(row=row_idx, column=col_idx).value
             if value is None:
                 continue
@@ -70,7 +70,6 @@ def formatar_tabela_excel(ws, df, start_row=1):
 # ---------- Autenticação simples por senha (via secrets) ----------
 
 def check_auth():
-    # se já autenticou na sessão, libera
     if st.session_state.get("auth_ok"):
         return True
 
@@ -87,12 +86,11 @@ def check_auth():
 
         if senha == senha_correta:
             st.session_state["auth_ok"] = True
-            st.rerun()  # recarrega já autenticado
+            st.rerun()
         else:
             st.error("Senha incorreta. Tente novamente.")
             return False
 
-    # Se ainda não autenticou, não libera o app
     st.stop()
 
 
@@ -225,11 +223,10 @@ def carregar_extrato_itau_upload(uploaded_file):
     linhas = ler_arquivo_tabela_upload(uploaded_file)
 
     for linha in linhas:
-        # extrai descrição primeiro
         descricao = extrair_descricao_linha(linha)
         desc_norm = normalizar_texto(descricao)
 
-        # pula linhas de saldo (não são movimentação real)
+        # Ignora linhas de saldo / resumo
         if (
             "SALDO ANTERIOR" in desc_norm
             or "SALDO TOTAL DISPONIVEL DIA" in desc_norm
@@ -286,11 +283,10 @@ def carregar_extrato_pagseguro_upload(uploaded_file):
     linhas = ler_arquivo_tabela_upload(uploaded_file)
 
     for linha in linhas:
-        # descrição primeiro
         descricao = extrair_descricao_linha(linha)
         desc_norm = normalizar_texto(descricao)
 
-        # linhas de saldo do dia não interessam
+        # Ignora linhas de saldo
         if "SALDO DO DIA" in desc_norm or "SALDO DIA" in desc_norm:
             continue
 
@@ -369,13 +365,13 @@ def classificar_categoria(mov):
     desc_norm = normalizar_texto(desc_orig)
     valor = mov.get("valor", 0.0)
 
-    # 1) Regras aprendidas pelo usuário (prioridade máxima)
+    # Regras aprendidas (prioridade máxima)
     if REGRAS_CATEGORIA:
         for padrao, categoria in REGRAS_CATEGORIA.items():
             if padrao in desc_norm:
                 return categoria
 
-    # 2) Regras fixas
+    # Regras fixas
     if "ANTINSECT" in desc_norm:
         return "Dedetização / Controle de Pragas"
 
@@ -458,4 +454,406 @@ def slugify(texto: str) -> str:
     repl = {
         "á": "a", "à": "a", "ã": "a", "â": "a",
         "é": "e", "ê": "e",
-       
+        "í": "i",
+        "ó": "o", "ô": "o", "õ": "o",
+        "ú": "u",
+        "ç": "c",
+    }
+    for a, b in repl.items():
+        s = s.replace(a, b)
+    for ch in [" ", "/", "\\", "|", ";", ","]:
+        s = s.replace(ch, "_")
+    while "__" in s:
+        s = s.replace("__", "_")
+    return s.strip("_") or "periodo"
+
+
+# ---------- Interface Streamlit ----------
+
+st.set_page_config(page_title="Fechamento Tempero das Gurias", layout="wide")
+
+check_auth()
+
+st.title("Fechamento Mensal - Tempero das Gurias")
+
+st.sidebar.header("Parâmetros")
+
+arquivo_itau = st.sidebar.file_uploader(
+    "Extrato Itaú (.csv ou .xlsx)", type=["csv", "xlsx", "xls"], key="itau"
+)
+arquivo_pag = st.sidebar.file_uploader(
+    "Extrato PagSeguro (.csv ou .xlsx)", type=["csv", "xlsx", "xls"], key="pagseguro"
+)
+
+saldo_inicial_input = st.sidebar.text_input(
+    "Saldo inicial consolidado do período (R$)", value="0"
+)
+
+default_periodo = datetime.today().strftime("%Y-%m") + " - período"
+nome_periodo = st.sidebar.text_input(
+    "Nome do período (para histórico)",
+    value=default_periodo,
+    help='Ex.: "2025-11 1ª quinzena", "2025-10 mês cheio"',
+)
+
+
+if arquivo_itau and arquivo_pag:
+    # Carrega regras aprendidas
+    global REGRAS_CATEGORIA
+    REGRAS_CATEGORIA = carregar_regras()
+
+    try:
+        saldo_inicial = parse_numero_br(saldo_inicial_input)
+    except Exception:
+        st.error("Saldo inicial inválido. Use formato 1234,56 ou 1234.56.")
+        st.stop()
+
+    try:
+        ent_itau, sai_itau, res_itau, mov_itau = carregar_extrato_itau_upload(arquivo_itau)
+        ent_pag, sai_pag, res_pag, mov_pag = carregar_extrato_pagseguro_upload(arquivo_pag)
+    except RuntimeError as e:
+        st.error(str(e))
+        st.stop()
+
+    entradas_totais = ent_itau + ent_pag
+    saidas_totais = sai_itau + sai_pag
+    resultado_consolidado = entradas_totais + saidas_totais
+    saldo_final = saldo_inicial + resultado_consolidado
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Entradas totais", format_currency(entradas_totais))
+    col2.metric("Saídas totais", format_currency(saidas_totais))
+    col3.metric("Resultado do período", format_currency(resultado_consolidado))
+
+    st.subheader("Resumo por Conta")
+
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown("**Itaú**")
+        st.write("Entradas:", format_currency(ent_itau))
+        st.write("Saídas  :", format_currency(sai_itau))
+        st.write("Resultado:", format_currency(res_itau))
+
+    with c2:
+        st.markdown("**PagSeguro**")
+        st.write("Entradas:", format_currency(ent_pag))
+        st.write("Saídas  :", format_currency(sai_pag))
+        st.write("Resultado:", format_currency(res_pag))
+
+    st.subheader("Consolidado da Loja")
+    st.write("Saldo inicial:", format_currency(saldo_inicial))
+    st.write("Saldo final  :", format_currency(saldo_final))
+
+    # --------- Monta DataFrame de movimentos com categorias ----------
+    movimentos = mov_itau + mov_pag
+    movimentos_cat = []
+    for mov in movimentos:
+        cat = classificar_categoria(mov)
+        v = mov.get("valor", 0.0)
+        movimentos_cat.append(
+            {
+                "Data": mov.get("data"),
+                "Conta": mov.get("conta"),
+                "Descrição": mov.get("descricao"),
+                "Categoria": cat,
+                "Valor": v,
+            }
+        )
+
+    df_mov = pd.DataFrame(movimentos_cat)
+
+    # ---------- Gerenciar categorias (criação de novas) ----------
+    st.subheader("Gerenciar Categorias")
+
+    categorias_padrao = [
+        "Vendas / Receitas",
+        "Fornecedores e Insumos",
+        "Folha de Pagamento",
+        "Aluguel Comercial",
+        "Contabilidade e RH",
+        "Dedetização / Controle de Pragas",
+        "Energia Elétrica",
+        "Motoboy / Entregas",
+        "Nutricionista",
+        "Impostos e Encargos",
+        "Investimentos (Aplicações)",
+        "Rendimentos de Aplicações",
+        "Fatura Cartão",
+        "Transferência Interna / Sócios",
+        "A Classificar",
+    ]
+
+    categorias_custom = carregar_categorias_personalizadas()
+    categorias_possiveis = categorias_padrao + categorias_custom
+
+    nova_cat = st.text_input("Criar nova categoria:")
+    if st.button("Adicionar categoria"):
+        if nova_cat.strip() != "":
+            if nova_cat not in categorias_possiveis:
+                categorias_custom.append(nova_cat)
+                salvar_categorias_personalizadas(categorias_custom)
+                st.success(f"Categoria '{nova_cat}' criada com sucesso!")
+                st.rerun()
+            else:
+                st.warning("Essa categoria já existe.")
+
+    # ---------- Conferência e ajustes de categorias ----------
+    st.subheader("Conferência e ajustes de categorias")
+
+    edited_df = st.data_editor(
+        df_mov,
+        key="editor_movimentos",
+        use_container_width=True,
+        num_rows="fixed",
+        column_config={
+            "Categoria": st.column_config.SelectboxColumn(
+                "Categoria",
+                options=categorias_possiveis,
+                help="Ajuste a categoria se necessário.",
+            )
+        },
+    )
+
+    st.markdown(
+        "_Dica: ajuste as categorias que estiverem erradas e, se quiser que o sistema memorize, "
+        "clique em **Salvar regras de categorização**._"
+    )
+
+    if st.button("Salvar regras de categorização"):
+        regras = carregar_regras()
+        alteracoes = 0
+        for _, row in edited_df.iterrows():
+            desc = row.get("Descrição")
+            cat = row.get("Categoria")
+            if not desc or not cat:
+                continue
+            desc_norm = normalizar_texto(desc)
+            if regras.get(desc_norm) != cat:
+                regras[desc_norm] = cat
+                alteracoes += 1
+        salvar_regras(regras)
+        REGRAS_CATEGORIA = regras
+        st.success(
+            f"{alteracoes} regra(s) de categorização salva(s). "
+            "Nos próximos fechamentos, descrições iguais serão classificadas automaticamente."
+        )
+
+    df_mov_export = edited_df.copy()
+
+    # ---------- Resumo por categoria ----------
+    entradas_cat = defaultdict(float)
+    saidas_cat = defaultdict(float)
+
+    for _, row in df_mov_export.iterrows():
+        cat = row["Categoria"]
+        v = row["Valor"]
+        if v > 0:
+            entradas_cat[cat] += v
+        elif v < 0:
+            saidas_cat[cat] += v
+
+    categorias_calc = sorted(set(list(entradas_cat.keys()) + list(saidas_cat.keys())))
+    dados_cat = []
+    for cat in categorias_calc:
+        dados_cat.append(
+            {
+                "Categoria": cat,
+                "Entradas": entradas_cat.get(cat, 0.0),
+                "Saídas": saidas_cat.get(cat, 0.0),
+            }
+        )
+
+    df_cat_export = pd.DataFrame(dados_cat)
+    df_cat_display = df_cat_export.copy()
+    df_cat_display["Entradas"] = df_cat_display["Entradas"].map(format_currency)
+    df_cat_display["Saídas"] = df_cat_display["Saídas"].map(format_currency)
+
+    st.subheader("Resumo por Categoria")
+    st.dataframe(df_cat_display, use_container_width=True)
+
+    # ---------- DataFrames para relatório ----------
+    df_resumo_contas = pd.DataFrame(
+        [
+            {"Conta": "Itaú", "Entradas": ent_itau, "Saídas": sai_itau, "Resultado": res_itau},
+            {"Conta": "PagSeguro", "Entradas": ent_pag, "Saídas": sai_pag, "Resultado": res_pag},
+        ]
+    )
+    df_consolidado = pd.DataFrame(
+        [
+            {
+                "Nome do período": nome_periodo,
+                "Entradas totais": entradas_totais,
+                "Saídas totais": saidas_totais,
+                "Resultado do período": resultado_consolidado,
+                "Saldo inicial": saldo_inicial,
+                "Saldo final": saldo_final,
+            }
+        ]
+    )
+
+    # ---------- Geração do Excel estilizado ----------
+    buffer = BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        # Aba Resumo
+        start_row_resumo = 3
+        df_resumo_contas.to_excel(
+            writer, sheet_name="Resumo", index=False, startrow=start_row_resumo
+        )
+
+        start_row_consol = start_row_resumo + len(df_resumo_contas) + 3
+        df_consolidado.to_excel(
+            writer, sheet_name="Resumo", index=False, startrow=start_row_consol
+        )
+
+        # Aba técnica para comparativo histórico
+        df_consolidado.to_excel(writer, sheet_name="ResumoDados", index=False)
+
+        # Categorias
+        df_cat_export.to_excel(writer, sheet_name="Categorias", index=False, startrow=1)
+
+        # Movimentos
+        df_mov_export.to_excel(writer, sheet_name="Movimentos", index=False, startrow=1)
+
+        wb = writer.book
+        ws_res = writer.sheets["Resumo"]
+        ws_cat = writer.sheets["Categorias"]
+        ws_mov = writer.sheets["Movimentos"]
+
+        # Título na aba Resumo
+        titulo = f"Fechamento Tempero das Gurias - {nome_periodo}"
+        ws_res["A1"] = titulo
+        ws_res["A1"].font = Font(bold=True, size=14)
+        ws_res["A1"].alignment = Alignment(horizontal="left")
+
+        # Formatar tabelas
+        formatar_tabela_excel(ws_res, df_resumo_contas, start_row=start_row_resumo)
+        formatar_tabela_excel(ws_res, df_consolidado, start_row=start_row_consol)
+        formatar_tabela_excel(ws_cat, df_cat_export, start_row=1)
+        formatar_tabela_excel(ws_mov, df_mov_export, start_row=1)
+
+    buffer.seek(0)
+
+    st.subheader("Relatório do período atual")
+
+    col_dl1, col_dl2 = st.columns(2)
+    with col_dl1:
+        st.download_button(
+            label="Baixar relatório Excel (período atual)",
+            data=buffer,
+            file_name="fechamento_tempero.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+    with col_dl2:
+        salvar = st.button("Salvar no histórico")
+
+    if salvar:
+        historico_dir = Path("fechamentos")
+        historico_dir.mkdir(exist_ok=True)
+        slug = slugify(nome_periodo)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        fname = historico_dir / f"fechamento_tempero_{slug}_{timestamp}.xlsx"
+        with open(fname, "wb") as f:
+            f.write(buffer.getvalue())
+        st.success(f"Relatório salvo no histórico como: {fname.name}")
+
+else:
+    st.info("Envie os arquivos do Itaú e PagSeguro na barra lateral para ver o fechamento.")
+
+
+# ---------- Histórico de Fechamentos e Comparativo ----------
+
+st.subheader("Histórico de Fechamentos Salvos")
+
+historico_dir = Path("fechamentos")
+if historico_dir.exists():
+    arquivos = sorted(
+        [p for p in historico_dir.iterdir() if p.is_file() and p.suffix == ".xlsx"],
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    if not arquivos:
+        st.write("Nenhum fechamento salvo ainda.")
+    else:
+        # Lista simples com download
+        for arq in arquivos:
+            stats = arq.stat()
+            data_mod = datetime.fromtimestamp(stats.st_mtime).strftime("%Y-%m-%d %H:%M")
+            with open(arq, "rb") as f:
+                data_bin = f.read()
+            col_a, col_b = st.columns([3, 1])
+            with col_a:
+                st.write(f"📄 **{arq.name}** — salvo em {data_mod}")
+            with col_b:
+                st.download_button(
+                    label="Baixar",
+                    data=data_bin,
+                    file_name=arq.name,
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key=f"dl_{arq.name}",
+                )
+
+        # Comparativo analítico
+        st.subheader("Comparativo entre períodos (Histórico Analítico)")
+
+        resumos = []
+        for arq in arquivos:
+            try:
+                # Tenta ler aba técnica
+                try:
+                    df_consol = pd.read_excel(arq, sheet_name="ResumoDados")
+                except Exception:
+                    df_res = pd.read_excel(arq, sheet_name="Resumo")
+                    if "Nome do período" not in df_res.columns:
+                        continue
+                    df_consol = df_res[df_res["Nome do período"].notna()]
+                    if df_consol.empty:
+                        continue
+
+                linha = df_consol.iloc[0]
+                periodo = str(linha.get("Nome do período", arq.name))
+                entradas = float(linha.get("Entradas totais", 0.0))
+                saidas = float(linha.get("Saídas totais", 0.0))
+                resultado = float(linha.get("Resultado do período", 0.0))
+                saldo_final_val = linha.get("Saldo final", None)
+                saldo_final = float(saldo_final_val) if saldo_final_val is not None else None
+
+                resumos.append(
+                    {
+                        "Período": periodo,
+                        "Entradas": entradas,
+                        "Saídas": saidas,
+                        "Resultado": resultado,
+                        "Saldo final": saldo_final,
+                    }
+                )
+            except Exception:
+                continue
+
+        if not resumos:
+            st.info(
+                "Ainda não foi possível montar o comparativo. "
+                "Gere e salve alguns fechamentos no novo formato."
+            )
+        else:
+            df_hist = pd.DataFrame(resumos)
+
+            # Ordena do mais antigo para o mais recente
+            df_hist = df_hist.iloc[::-1].reset_index(drop=True)
+
+            df_display = df_hist.copy()
+            for col in ["Entradas", "Saídas", "Resultado", "Saldo final"]:
+                if col in df_display.columns:
+                    df_display[col] = df_display[col].apply(
+                        lambda x: format_currency(x) if pd.notna(x) else "-"
+                    )
+
+            st.write("Tabela comparativa:")
+            st.dataframe(df_display, use_container_width=True)
+
+            st.write("Resultado por período:")
+            chart_df = df_hist.set_index("Período")[["Resultado"]]
+            st.bar_chart(chart_df)
+
+else:
+    st.write("Nenhum fechamento salvo ainda.")
