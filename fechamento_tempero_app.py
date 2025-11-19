@@ -4,7 +4,6 @@ from pathlib import Path
 from io import BytesIO
 from datetime import datetime
 import json
-import time
 
 import pandas as pd
 import streamlit as st
@@ -1015,14 +1014,18 @@ with tab3:
 
                 # Botão Excluir
                 with col_c:
-                    if st.button("Excluir", key=f"excluir_{nome}"):
-                        try:
-                            arq.unlink()  # remove o arquivo do disco
-                            st.success(f"Arquivo **{nome}** excluído com sucesso!")
-                            time.sleep(0.6)
-                            st.experimental_rerun()  # recarrega a página
-                        except Exception as e:
-                            st.error(f"Erro ao excluir {nome}: {e}")
+					if st.button("Excluir", key=f"excluir_{nome}"):
+						try:
+							arq.unlink()  # remove o arquivo do disco
+							st.success(f"Arquivo **{nome}** excluído com sucesso!")
+							# Recarrega a app na versão nova do Streamlit
+							st.rerun()
+						except FileNotFoundError:
+							# Se por algum motivo o arquivo já não existir mais
+							st.warning(f"O arquivo **{nome}** já havia sido excluído.")
+							st.rerun()
+						except Exception as e:
+            st.error(f"Erro ao excluir {nome}: {e}")
 
             st.markdown("</div>", unsafe_allow_html=True)
 
