@@ -34,22 +34,24 @@ def inject_css():
         <style>
         .block-container {{
             max-width: 1200px;
-            padding-top: 1rem;
-            padding-bottom: 2rem;
+            padding-top: 3.5rem;        /* mais espaço no topo */
+            padding-bottom: 2.5rem;
         }}
         body {{
             background-color: {BACKGROUND_SOFT};
         }}
         .tempero-title {{
-            font-size: 2.0rem;
+            font-size: 1.8rem;          /* um tiquinho menor pra não estourar */
             font-weight: 800;
             color: {PRIMARY_COLOR};
-            margin-bottom: 0.2rem;
+            margin-bottom: 0.3rem;
+            text-align: center;         /* centraliza o título */
         }}
         .tempero-subtitle {{
             font-size: 0.95rem;
             color: #666666;
             margin-bottom: 1.2rem;
+            text-align: center;         /* centraliza o subtítulo também */
         }}
         .tempero-card {{
             background-color: #FFFFFF;
