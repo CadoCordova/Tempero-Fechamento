@@ -1076,22 +1076,22 @@ with tab3:
                     "Ainda não foi possível montar o comparativo. "
                     "Gere e salve alguns fechamentos no novo formato."
                 )
-            else:
-                df_hist = pd.DataFrame(resumos)
-                df_hist = df_hist.iloc[::-1].reset_index(drop=True)
+            #else:
+            #    df_hist = pd.DataFrame(resumos)
+            #    df_hist = df_hist.iloc[::-1].reset_index(drop=True)
 
-                df_display = df_hist.copy()
-                for col in ["Entradas", "Saídas", "Resultado", "Saldo final"]:
-                    if col in df_display.columns:
-                        df_display[col] = df_display[col].apply(
-                            lambda x: format_currency(x) if pd.notna(x) else "-"
-                        )
+            #   df_display = df_hist.copy()
+            #    for col in ["Entradas", "Saídas", "Resultado", "Saldo final"]:
+            #        if col in df_display.columns:
+            #            df_display[col] = df_display[col].apply(
+            #                lambda x: format_currency(x) if pd.notna(x) else "-"
+            #            )
 
-                st.dataframe(df_display, use_container_width=True)
+            #    st.dataframe(df_display, use_container_width=True)
 
-                st.markdown("**Resultado por período:**")
-                chart_df = df_hist.set_index("Período")[["Resultado"]]
-                st.bar_chart(chart_df)
+            #    st.markdown("**Resultado por período:**")
+            #    chart_df = df_hist.set_index("Período")[["Resultado"]]
+            #    st.bar_chart(chart_df)
 
     else:
         st.write("Nenhum fechamento salvo ainda.")
