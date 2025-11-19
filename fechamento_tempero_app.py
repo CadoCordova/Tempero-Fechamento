@@ -708,42 +708,42 @@ if arquivo_itau and arquivo_pag:
     # ---------- Geração do Excel estilizado ----------
     buffer = BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-    # -------------------- Resumo Itaú / PagSeguro --------------------
-    start_row_resumo = 3
-    df_resumo_contas.to_excel(
+		# -------------------- Resumo Itaú / PagSeguro --------------------
+		start_row_resumo = 3
+		df_resumo_contas.to_excel(
         writer, sheet_name="Resumo", index=False, startrow=start_row_resumo
-    )
+		)
 
-    # -------------------- Consolidação --------------------
-    start_row_consol = start_row_resumo + len(df_resumo_contas) + 3
-    df_consolidado.to_excel(
-        writer, sheet_name="Resumo", index=False, startrow=start_row_consol
-    )
-
-    # 🔹 NOVO: aba limpa para comparativo histórico
-    df_consolidado.to_excel(writer, sheet_name="ResumoDados", index=False)
-
-    # -------------------- Categorias --------------------
-    df_cat_export.to_excel(writer, sheet_name="Categorias", index=False, startrow=1)
-
-    # -------------------- Movimentos --------------------
-    df_mov_export.to_excel(writer, sheet_name="Movimentos", index=False, startrow=1)
-
-    # Autofit
-    workbook = writer.book
-    for sheet in writer.sheets.values():
-        ws = sheet
-        for col in ws.columns:
-            max_len = 0
-            col_letter = col[0].column_letter
-            for cell in col:
-                try:
-                    if cell.value:
-                        max_len = max(max_len, len(str(cell.value)))
-                except:
-                    pass
-            adjusted_width = max_len + 2
-            ws.column_dimensions[col_letter].width = adjusted_width
+		# -------------------- Consolidação --------------------
+		start_row_consol = start_row_resumo + len(df_resumo_contas) + 3
+		df_consolidado.to_excel(
+			writer, sheet_name="Resumo", index=False, startrow=start_row_consol
+		)
+	
+		# 🔹 NOVO: aba limpa para comparativo histórico
+		df_consolidado.to_excel(writer, sheet_name="ResumoDados", index=False)
+	
+		# -------------------- Categorias --------------------
+		df_cat_export.to_excel(writer, sheet_name="Categorias", index=False, startrow=1)
+	
+		# -------------------- Movimentos --------------------
+		df_mov_export.to_excel(writer, sheet_name="Movimentos", index=False, startrow=1)
+	
+		# Autofit
+		workbook = writer.book
+		for sheet in writer.sheets.values():
+			ws = sheet
+			for col in ws.columns:
+				max_len = 0
+				col_letter = col[0].column_letter
+				for cell in col:
+					try:
+						if cell.value:
+							max_len = max(max_len, len(str(cell.value)))
+					except:
+						pass
+				adjusted_width = max_len + 2
+				ws.column_dimensions[col_letter].width = adjusted_width
 
 
     start_row_consol = start_row_resumo + len(df_resumo_contas) + 3
