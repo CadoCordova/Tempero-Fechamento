@@ -590,7 +590,7 @@ nome_periodo = st.sidebar.text_input(
 st.sidebar.markdown("---")
 st.sidebar.markdown(
     "Feito para a **Tempero das Gurias** 💕\n\n"
-    "_Use este painel apenas internamente._"
+##"_Use este painel apenas internamente._"
 )
 
 # ---------- Cálculos principais (compartilhados entre as abas) ----------
