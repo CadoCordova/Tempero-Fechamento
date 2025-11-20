@@ -9,9 +9,138 @@ import json
 import pandas as pd
 import streamlit as st
 
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaIoBaseUpload, MediaIoBaseDownload
+
 from openpyxl.styles import Font, Alignment, PatternFill
 from openpyxl.utils import get_column_letter
 
+
+# ---------- Integração com Google Drive (histórico) ----------
+
+def get_gdrive_service():
+    """
+    Cria o cliente da API do Google Drive usando a service account
+    configurada em st.secrets['gcp_service_account'].
+    """
+    sa_info = st.secrets["gcp_service_account"]
+    creds = service_account.Credentials.from_service_account_info(
+        sa_info,
+        scopes=["https://www.googleapis.com/auth/drive"],
+    )
+    service = build("drive", "v3", credentials=creds)
+    return service
+
+
+def get_history_folder_id(service):
+    """
+    Obtém (ou cria) a pasta de históricos no Google Drive.
+    Usa o nome definido em GDRIVE_FOLDER_NAME nos secrets (padrão: Tempero_Fechamentos).
+    """
+    if "gdrive_history_folder_id" in st.session_state:
+        return st.session_state["gdrive_history_folder_id"]
+
+    folder_name = st.secrets.get("GDRIVE_FOLDER_NAME", "Tempero_Fechamentos")
+
+    query = (
+        f"mimeType = 'application/vnd.google-apps.folder' "
+        f"and name = '{folder_name}' and trashed = false"
+    )
+
+    results = (
+        service.files()
+        .list(
+            q=query,
+            spaces="drive",
+            fields="files(id, name)",
+            pageSize=10,
+        )
+        .execute()
+    )
+    files = results.get("files", [])
+    if files:
+        folder_id = files[0]["id"]
+    else:
+        file_metadata = {
+            "name": folder_name,
+            "mimeType": "application/vnd.google-apps.folder",
+        }
+        folder = service.files().create(body=file_metadata, fields="id").execute()
+        folder_id = folder["id"]
+
+    st.session_state["gdrive_history_folder_id"] = folder_id
+    return folder_id
+
+
+def upload_history_to_gdrive(buffer: BytesIO, filename: str):
+    """
+    Envia o arquivo Excel do fechamento para a pasta de históricos no Google Drive.
+    """
+    service = get_gdrive_service()
+    folder_id = get_history_folder_id(service)
+
+    buffer.seek(0)
+    media = MediaIoBaseUpload(
+        buffer,
+        mimetype=(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ),
+        resumable=False,
+    )
+    file_metadata = {"name": filename, "parents": [folder_id]}
+    file = (
+        service.files()
+        .create(body=file_metadata, media_body=media, fields="id, name")
+        .execute()
+    )
+    return file["id"]
+
+
+def list_history_from_gdrive():
+    """
+    Lista os arquivos de fechamento salvos na pasta de históricos do Google Drive.
+    Retorna uma lista de dicts com: id, name, modifiedTime.
+    """
+    service = get_gdrive_service()
+    folder_id = get_history_folder_id(service)
+
+    query = f"'{folder_id}' in parents and trashed = false"
+    results = (
+        service.files()
+        .list(
+            q=query,
+            spaces="drive",
+            fields="files(id, name, modifiedTime)",
+            orderBy="modifiedTime desc",
+            pageSize=100,
+        )
+        .execute()
+    )
+    return results.get("files", [])
+
+
+def download_history_file(file_id: str) -> BytesIO:
+    """
+    Faz download de um arquivo de histórico do Google Drive e retorna um BytesIO.
+    """
+    service = get_gdrive_service()
+    request = service.files().get_media(fileId=file_id)
+    buf = BytesIO()
+    downloader = MediaIoBaseDownload(buf, request)
+    done = False
+    while not done:
+        status, done = downloader.next_chunk()
+    buf.seek(0)
+    return buf
+
+
+def delete_history_file(file_id: str):
+    """
+    Exclui um arquivo de histórico do Google Drive.
+    """
+    service = get_gdrive_service()
+    service.files().delete(fileId=file_id).execute()
 
 # ---------- Caminhos de arquivos auxiliares ----------
 
@@ -917,18 +1046,20 @@ with tab1:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
 
-        with col_dl2:
+                with col_dl2:
             salvar = st.button("Salvar no histórico")
 
         if salvar:
-            historico_dir = Path("fechamentos")
-            historico_dir.mkdir(exist_ok=True)
             slug = slugify(nome_periodo)
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            fname = historico_dir / f"fechamento_tempero_{slug}_{timestamp}.xlsx"
-            with open(fname, "wb") as f:
-                f.write(excel_buffer.getvalue())
-            st.success(f"Relatório salvo no histórico como: {fname.name}")
+            filename = f"fechamento_tempero_{slug}_{timestamp}.xlsx"
+            try:
+                upload_history_to_gdrive(excel_buffer, filename)
+                st.success(
+                    f"Relatório salvo no histórico (Google Drive) como: {filename}"
+                )
+            except Exception as e:
+                st.error(f"Erro ao salvar no Google Drive: {e}")
         st.markdown("</div>", unsafe_allow_html=True)
 
 
@@ -1037,123 +1168,138 @@ with tab3:
         unsafe_allow_html=True,
     )
 
-    historico_dir = Path("fechamentos")
-    if historico_dir.exists():
-        arquivos = sorted(
-            [p for p in historico_dir.iterdir() if p.is_file() and p.suffix == ".xlsx"],
-            key=lambda p: p.stat().st_mtime,
-            reverse=True,
+    try:
+        arquivos = list_history_from_gdrive()
+    except Exception as e:
+        st.error(f"Erro ao acessar Google Drive: {e}")
+        arquivos = []
+
+    if not arquivos:
+        st.write("Nenhum fechamento salvo ainda.")
+    else:
+        # Lista de arquivos (da pasta do Drive)
+        st.markdown("**Fechamentos salvos**")
+        st.markdown('<div class="tempero-card">', unsafe_allow_html=True)
+
+        for file_info in arquivos:
+            file_id = file_info["id"]
+            nome = file_info["name"]
+            mod_raw = file_info.get("modifiedTime")
+
+            # converte data/hora do Google (RFC3339) para algo amigável
+            try:
+                dt = datetime.fromisoformat(mod_raw.replace("Z", "+00:00"))
+                data_mod = dt.strftime("%Y-%m-%d %H:%M")
+            except Exception:
+                data_mod = mod_raw
+
+            col_a, col_b, col_c = st.columns([5, 1, 1])
+
+            # Nome + data
+            with col_a:
+                st.write(f"📄 **{nome}**")
+                st.caption(f"salvo em {data_mod}")
+
+            # Botão Baixar
+            with col_b:
+                try:
+                    buf = download_history_file(file_id)
+                    data_bin = buf.getvalue()
+                    st.download_button(
+                        label="Baixar",
+                        data=data_bin,
+                        file_name=nome,
+                        mime=(
+                            "application/vnd.openxmlformats-officedocument."
+                            "spreadsheetml.sheet"
+                        ),
+                        key=f"baixar_{file_id}",
+                    )
+                except Exception as e:
+                    st.error(f"Erro ao baixar {nome}: {e}")
+
+            # Botão Excluir
+            with col_c:
+                if st.button("Excluir", key=f"excluir_{file_id}"):
+                    try:
+                        delete_history_file(file_id)
+                        st.success(f"Arquivo **{nome}** excluído com sucesso!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Erro ao excluir {nome}: {e}")
+
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        # Comparativo entre períodos (Histórico Analítico)
+        st.markdown("**Comparativo entre períodos (Histórico Analítico)**")
+        st.markdown(
+            '<div class="tempero-section-sub">Baseado nos relatórios salvos no histórico (Google Drive).</div>',
+            unsafe_allow_html=True,
         )
 
-        if not arquivos:
-            st.write("Nenhum fechamento salvo ainda.")
-        else:
-            # Lista de arquivos
-            st.markdown("**Fechamentos salvos**")
-            st.markdown('<div class="tempero-card">', unsafe_allow_html=True)
+        resumos = []
+        for file_info in arquivos:
+            file_id = file_info["id"]
+            nome = file_info["name"]
 
-            for arq in arquivos:
-                nome = arq.name
-                stats = arq.stat()
-                data_mod = datetime.fromtimestamp(stats.st_mtime).strftime("%Y-%m-%d %H:%M")
+            try:
+                buf = download_history_file(file_id)
 
-                col_a, col_b, col_c = st.columns([5, 1, 1])
-
-                # Nome + data
-                with col_a:
-                    st.write(f"📄 **{nome}**")
-                    st.caption(f"salvo em {data_mod}")
-
-                # Botão Baixar
-                with col_b:
-                    with open(arq, "rb") as fbin:
-                        st.download_button(
-                            label="Baixar",
-                            data=fbin,
-                            file_name=nome,
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            key=f"baixar_{nome}",
-                        )
-
-                # Botão Excluir
-                with col_c:
-                    if st.button("Excluir", key=f"excluir_{nome}"):
-                        try:
-                            arq.unlink()  # remove o arquivo do disco
-                            st.success(f"Arquivo **{nome}** excluído com sucesso!")
-                            # Recarrega a app na versão nova do Streamlit
-                            st.rerun()
-                        except FileNotFoundError:
-                            # Se por algum motivo o arquivo já não existir mais
-                            st.warning(f"O arquivo **{nome}** já havia sido excluído.")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Erro ao excluir {nome}: {e}")
-
-            st.markdown("</div>", unsafe_allow_html=True)
-
-            # Comparativo
-            st.markdown("**Comparativo entre períodos (Histórico Analítico)**")
-            st.markdown(
-                '<div class="tempero-section-sub">Baseado nos relatórios salvos no histórico.</div>',
-                unsafe_allow_html=True,
-            )
-
-            resumos = []
-            for arq in arquivos:
+                # 1ª tentativa: aba técnica "ResumoDados"
                 try:
-                    # Tenta ler aba técnica
-                    try:
-                        df_consol = pd.read_excel(arq, sheet_name="ResumoDados")
-                    except Exception:
-                        df_res = pd.read_excel(arq, sheet_name="Resumo")
-                        if "Nome do período" not in df_res.columns:
-                            continue
-                        df_consol = df_res[df_res["Nome do período"].notna()]
-                        if df_consol.empty:
-                            continue
-
-                    linha = df_consol.iloc[0]
-                    periodo = str(linha.get("Nome do período", arq.name))
-                    entradas = float(linha.get("Entradas totais", 0.0))
-                    saidas = float(linha.get("Saídas totais", 0.0))
-                    resultado = float(linha.get("Resultado do período", 0.0))
-                    saldo_final_val = linha.get("Saldo final", None)
-                    saldo_final_hist = float(saldo_final_val) if saldo_final_val is not None else None
-
-                    resumos.append(
-                        {
-                            "Período": periodo,
-                            "Entradas": entradas,
-                            "Saídas": saidas,
-                            "Resultado": resultado,
-                            "Saldo final": saldo_final_hist,
-                        }
-                    )
+                    df_consol = pd.read_excel(buf, sheet_name="ResumoDados")
                 except Exception:
-                    continue
+                    # fallback: tenta ler "Resumo"
+                    buf.seek(0)
+                    df_res = pd.read_excel(buf, sheet_name="Resumo")
+                    if "Nome do período" not in df_res.columns:
+                        continue
+                    df_consol = df_res[df_res["Nome do período"].notna()]
+                    if df_consol.empty:
+                        continue
 
-            if not resumos:
-                st.info(
-                    "Ainda não foi possível montar o comparativo. "
-                    "Gere e salve alguns fechamentos no novo formato."
+                linha = df_consol.iloc[0]
+                periodo = str(linha.get("Nome do período", nome))
+                entradas = float(linha.get("Entradas totais", 0.0))
+                saidas = float(linha.get("Saídas totais", 0.0))
+                resultado = float(linha.get("Resultado do período", 0.0))
+                saldo_final_val = linha.get("Saldo final", None)
+                saldo_final_hist = (
+                    float(saldo_final_val) if saldo_final_val is not None else None
                 )
-            else:
-                df_hist = pd.DataFrame(resumos)
-                df_hist = df_hist.iloc[::-1].reset_index(drop=True)
 
-                df_display = df_hist.copy()
-                for col in ["Entradas", "Saídas", "Resultado", "Saldo final"]:
-                    if col in df_display.columns:
-                        df_display[col] = df_display[col].apply(
-                            lambda x: format_currency(x) if pd.notna(x) else "-"
-                        )
+                resumos.append(
+                    {
+                        "Período": periodo,
+                        "Entradas": entradas,
+                        "Saídas": saidas,
+                        "Resultado": resultado,
+                        "Saldo final": saldo_final_hist,
+                    }
+                )
+            except Exception:
+                continue
 
-                st.dataframe(df_display, use_container_width=True)
+        if not resumos:
+            st.info(
+                "Ainda não foi possível montar o comparativo. "
+                "Gere e salve alguns fechamentos no novo formato."
+            )
+        else:
+            df_hist = pd.DataFrame(resumos)
+            # inverte pra mostrar do mais antigo pro mais recente, se quiser
+            df_hist = df_hist.iloc[::-1].reset_index(drop=True)
 
-                st.markdown("**Resultado por período:**")
-                chart_df = df_hist.set_index("Período")[["Resultado"]]
-                st.bar_chart(chart_df)
+            df_display = df_hist.copy()
+            for col in ["Entradas", "Saídas", "Resultado", "Saldo final"]:
+                if col in df_display.columns:
+                    df_display[col] = df_display[col].apply(
+                        lambda x: format_currency(x) if pd.notna(x) else "-"
+                    )
 
-    else:
-        st.write("Nenhum fechamento salvo ainda.")
+            st.dataframe(df_display, use_container_width=True)
+
+            st.markdown("**Resultado por período:**")
+            chart_df = df_hist.set_index("Período")[["Resultado"]]
+            st.bar_chart(chart_df)
+
