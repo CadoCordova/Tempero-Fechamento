@@ -1046,7 +1046,7 @@ with tab1:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
 
-                with col_dl2:
+                        with col_dl2:
             salvar = st.button("Salvar no histórico")
 
         if salvar:
@@ -1061,6 +1061,7 @@ with tab1:
             except Exception as e:
                 st.error(f"Erro ao salvar no Google Drive: {e}")
         st.markdown("</div>", unsafe_allow_html=True)
+
 
 
 # ---------- ABA 2: Conferência & Categorias ----------
