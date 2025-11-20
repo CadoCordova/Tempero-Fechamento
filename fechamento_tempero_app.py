@@ -1046,7 +1046,7 @@ with tab1:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
 
-                        with col_dl2:
+        with col_dl2:
             salvar = st.button("Salvar no histórico")
 
         if salvar:
