@@ -1179,21 +1179,130 @@ if arquivo_itau and arquivo_pag:
 
 
 # ========================
-#  Abas
+#  Abas (ordem: Caixa, Fechamento, Categorias, Histórico)
 # ========================
 
 tab1, tab2, tab3, tab4 = st.tabs(
     [
+        "💵 Caixa Diário",
         "💗 Fechamento Mensal",
         "🧾 Conferência & Categorias",
         "📊 Histórico & Comparativos",
-        "💵 Caixa Diário",
     ]
 )
 
-# ---------- ABA 1: Fechamento ----------
+
+# ---------- ABA 1: Caixa Diário ----------
 
 with tab1:
+    st.markdown(
+        '<div class="tempero-section-title">💵 Caixa diário em dinheiro</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<div class="tempero-section-sub">'
+        "Registre aqui as entradas e saídas em dinheiro. "
+        "Esses lançamentos são salvos no Google Drive e usados nos fechamentos mensais."
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    if df_dinheiro_periodo.empty:
+        df_dinheiro_periodo = pd.DataFrame(
+            [
+                {
+                    "Data": datetime.today().date(),
+                    "Descrição": "",
+                    "Tipo": "Entrada",
+                    "Valor": 0.0,
+                }
+            ],
+            columns=["Data", "Descrição", "Tipo", "Valor"],
+        )
+
+    df_dinheiro_ui = st.data_editor(
+        df_dinheiro_periodo,
+        num_rows="dynamic",
+        hide_index=True,
+        use_container_width=True,
+        column_config={
+            "Data": st.column_config.DateColumn("Data"),
+            "Descrição": st.column_config.TextColumn("Descrição"),
+            "Tipo": st.column_config.SelectboxColumn(
+                "Tipo", options=["Entrada", "Saída"], required=True
+            ),
+            "Valor": st.column_config.NumberColumn(
+                "Valor (R$)", step=0.01, min_value=0.0
+            ),
+        },
+        key=f"editor_dinheiro_{ano_mes_ref or 'padrao'}",
+    )
+
+    # Limpa linhas sem valor e sem descrição
+    df_din_limpo = df_dinheiro_ui.copy()
+    if not df_din_limpo.empty:
+        df_din_limpo = df_din_limpo[
+            ~(
+                (df_din_limpo["Valor"].fillna(0) == 0)
+                & (df_din_limpo["Descrição"].fillna("").str.strip() == "")
+            )
+        ]
+
+    col_btn1, col_btn2 = st.columns([1, 3])
+    with col_btn1:
+        salvar_caixa = st.button("Salvar lançamentos de dinheiro")
+
+    if salvar_caixa:
+        try:
+            df_global = df_caixa_global.copy()
+
+            if ano_mes_ref:
+                datas = pd.to_datetime(df_global["Data"], errors="coerce")
+                mask = datas.dt.strftime("%Y-%m") == ano_mes_ref
+                df_outros_meses = df_global[~mask]
+            else:
+                df_outros_meses = df_global.iloc[0:0]
+
+            df_novo_global = pd.concat(
+                [df_outros_meses, df_din_limpo], ignore_index=True
+            )
+
+            st.session_state["df_caixa_global"] = df_novo_global
+            save_cash_to_gdrive(df_novo_global)
+            st.success("Lançamentos de dinheiro salvos com sucesso no Google Drive!")
+            st.rerun()
+        except Exception as e:
+            st.error(f"Erro ao salvar caixa diário no Drive: {e}")
+
+    # Totais do mês (caixa) apenas para exibição na aba
+    df_din_calc = df_din_limpo.copy()
+    if not df_din_calc.empty and "Valor" in df_din_calc.columns:
+        df_din_calc = df_din_calc[df_din_calc["Valor"] > 0]
+
+    entradas_d = df_din_calc.loc[
+        df_din_calc["Tipo"] == "Entrada", "Valor"
+    ].sum()
+    saidas_d = df_din_calc.loc[
+        df_din_calc["Tipo"] == "Saída", "Valor"
+    ].sum()
+    saldo_d = entradas_d - saidas_d
+
+    st.markdown("---")
+    col_c1, col_c2, col_c3 = st.columns(3)
+    with col_c1:
+        st.write("Entradas em dinheiro no período:", format_currency(entradas_d))
+    with col_c2:
+        st.write(
+            "Saídas em dinheiro no período:",
+            format_currency(-saidas_d) if saidas_d else "R$ 0,00",
+        )
+    with col_c3:
+        st.write("Saldo do dinheiro no período:", format_currency(saldo_d))
+
+
+# ---------- ABA 2: Fechamento Mensal ----------
+
+with tab2:
     st.markdown(
         '<div class="tempero-section-title">Resumo do período</div>',
         unsafe_allow_html=True,
@@ -1336,9 +1445,9 @@ with tab1:
         st.markdown("</div>", unsafe_allow_html=True)
 
 
-# ---------- ABA 2: Conferência & Categorias ----------
+# ---------- ABA 3: Conferência & Categorias ----------
 
-with tab2:
+with tab3:
     st.markdown(
         '<div class="tempero-section-title">🧾 Conferência de lançamentos e categorias</div>',
         unsafe_allow_html=True,
@@ -1433,9 +1542,9 @@ with tab2:
         st.markdown("</div>", unsafe_allow_html=True)
 
 
-# ---------- ABA 3: Histórico & Comparativos ----------
+# ---------- ABA 4: Histórico & Comparativos ----------
 
-with tab3:
+with tab4:
     st.markdown(
         '<div class="tempero-section-title">📊 Histórico de fechamentos e comparativo</div>',
         unsafe_allow_html=True,
@@ -1568,111 +1677,3 @@ with tab3:
                         st.error(f"Erro ao excluir {nome}: {e}")
 
         st.markdown("</div>", unsafe_allow_html=True)
-
-
-# ---------- ABA 4: Caixa Diário ----------
-
-with tab4:
-    st.markdown(
-        '<div class="tempero-section-title">💵 Caixa diário em dinheiro</div>',
-        unsafe_allow_html=True,
-    )
-    st.markdown(
-        '<div class="tempero-section-sub">'
-        "Registre aqui as entradas e saídas em dinheiro. "
-        "Esses lançamentos são salvos no Google Drive e usados nos fechamentos mensais."
-        "</div>",
-        unsafe_allow_html=True,
-    )
-
-    if df_dinheiro_periodo.empty:
-        df_dinheiro_periodo = pd.DataFrame(
-            [
-                {
-                    "Data": datetime.today().date(),
-                    "Descrição": "",
-                    "Tipo": "Entrada",
-                    "Valor": 0.0,
-                }
-            ],
-            columns=["Data", "Descrição", "Tipo", "Valor"],
-        )
-
-    df_dinheiro_ui = st.data_editor(
-        df_dinheiro_periodo,
-        num_rows="dynamic",
-        hide_index=True,
-        use_container_width=True,
-        column_config={
-            "Data": st.column_config.DateColumn("Data"),
-            "Descrição": st.column_config.TextColumn("Descrição"),
-            "Tipo": st.column_config.SelectboxColumn(
-                "Tipo", options=["Entrada", "Saída"], required=True
-            ),
-            "Valor": st.column_config.NumberColumn(
-                "Valor (R$)", step=0.01, min_value=0.0
-            ),
-        },
-        key=f"editor_dinheiro_{ano_mes_ref or 'padrao'}",
-    )
-
-    # Limpa linhas sem valor e sem descrição
-    df_din_limpo = df_dinheiro_ui.copy()
-    if not df_din_limpo.empty:
-        df_din_limpo = df_din_limpo[
-            ~(
-                (df_din_limpo["Valor"].fillna(0) == 0)
-                & (df_din_limpo["Descrição"].fillna("").str.strip() == "")
-            )
-        ]
-
-    col_btn1, col_btn2 = st.columns([1, 3])
-    with col_btn1:
-        salvar_caixa = st.button("Salvar lançamentos de dinheiro")
-
-    if salvar_caixa:
-        try:
-            df_global = df_caixa_global.copy()
-
-            if ano_mes_ref:
-                datas = pd.to_datetime(df_global["Data"], errors="coerce")
-                mask = datas.dt.strftime("%Y-%m") == ano_mes_ref
-                df_outros_meses = df_global[~mask]
-            else:
-                df_outros_meses = df_global.iloc[0:0]
-
-            df_novo_global = pd.concat(
-                [df_outros_meses, df_din_limpo], ignore_index=True
-            )
-
-            st.session_state["df_caixa_global"] = df_novo_global
-            save_cash_to_gdrive(df_novo_global)
-            st.success("Lançamentos de dinheiro salvos com sucesso no Google Drive!")
-            st.rerun()
-        except Exception as e:
-            st.error(f"Erro ao salvar caixa diário no Drive: {e}")
-
-    # Totais do mês (caixa) apenas para exibição na aba
-    df_din_calc = df_din_limpo.copy()
-    if not df_din_calc.empty and "Valor" in df_din_calc.columns:
-        df_din_calc = df_din_calc[df_din_calc["Valor"] > 0]
-
-    entradas_d = df_din_calc.loc[
-        df_din_calc["Tipo"] == "Entrada", "Valor"
-    ].sum()
-    saidas_d = df_din_calc.loc[
-        df_din_calc["Tipo"] == "Saída", "Valor"
-    ].sum()
-    saldo_d = entradas_d - saidas_d
-
-    st.markdown("---")
-    col_c1, col_c2, col_c3 = st.columns(3)
-    with col_c1:
-        st.write("Entradas em dinheiro no período:", format_currency(entradas_d))
-    with col_c2:
-        st.write(
-            "Saídas em dinheiro no período:",
-            format_currency(-saidas_d) if saidas_d else "R$ 0,00",
-        )
-    with col_c3:
-        st.write("Saldo do dinheiro no período:", format_currency(saldo_d))
