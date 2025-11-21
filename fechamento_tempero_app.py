@@ -1178,6 +1178,7 @@ with tab3:
         unsafe_allow_html=True,
     )
 
+    # Busca arquivos do histórico no Google Drive
     try:
         arquivos = list_history_from_gdrive()
     except Exception as e:
@@ -1187,60 +1188,9 @@ with tab3:
     if not arquivos:
         st.write("Nenhum fechamento salvo ainda.")
     else:
-        # Lista de arquivos (da pasta do Drive)
-        st.markdown("**Fechamentos salvos**")
-        st.markdown('<div class="tempero-card">', unsafe_allow_html=True)
-
-        for file_info in arquivos:
-            file_id = file_info["id"]
-            nome = file_info["name"]
-            mod_raw = file_info.get("modifiedTime")
-
-            # converte data/hora do Google (RFC3339) para algo amigável
-            try:
-                dt = datetime.fromisoformat(mod_raw.replace("Z", "+00:00"))
-                data_mod = dt.strftime("%Y-%m-%d %H:%M")
-            except Exception:
-                data_mod = mod_raw
-
-            col_a, col_b, col_c = st.columns([5, 1, 1])
-
-            # Nome + data
-            with col_a:
-                st.write(f"📄 **{nome}**")
-                st.caption(f"salvo em {data_mod}")
-
-            # Botão Baixar
-            with col_b:
-                try:
-                    buf = download_history_file(file_id)
-                    data_bin = buf.getvalue()
-                    st.download_button(
-                        label="Baixar",
-                        data=data_bin,
-                        file_name=nome,
-                        mime=(
-                            "application/vnd.openxmlformats-officedocument."
-                            "spreadsheetml.sheet"
-                        ),
-                        key=f"baixar_{file_id}",
-                    )
-                except Exception as e:
-                    st.error(f"Erro ao baixar {nome}: {e}")
-
-            # Botão Excluir
-            with col_c:
-                if st.button("Excluir", key=f"excluir_{file_id}"):
-                    try:
-                        delete_history_file(file_id)
-                        st.success(f"Arquivo **{nome}** excluído com sucesso!")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Erro ao excluir {nome}: {e}")
-
-        st.markdown("</div>", unsafe_allow_html=True)
-
-        # Comparativo entre períodos (Histórico Analítico)
+        # =========================
+        # 1) Comparativo no topo
+        # =========================
         st.markdown("**Comparativo entre períodos (Histórico Analítico)**")
         st.markdown(
             '<div class="tempero-section-sub">Baseado nos relatórios salvos no histórico (Google Drive).</div>',
@@ -1297,7 +1247,7 @@ with tab3:
             )
         else:
             df_hist = pd.DataFrame(resumos)
-            # inverte pra mostrar do mais antigo pro mais recente, se quiser
+            # se quiser do mais antigo pro mais recente:
             df_hist = df_hist.iloc[::-1].reset_index(drop=True)
 
             df_display = df_hist.copy()
@@ -1313,3 +1263,59 @@ with tab3:
             chart_df = df_hist.set_index("Período")[["Resultado"]]
             st.bar_chart(chart_df)
 
+        st.markdown("---")
+
+        # =========================
+        # 2) Lista de arquivos abaixo
+        # =========================
+        st.markdown("**Fechamentos salvos**")
+        st.markdown('<div class="tempero-card">', unsafe_allow_html=True)
+
+        for file_info in arquivos:
+            file_id = file_info["id"]
+            nome = file_info["name"]
+            mod_raw = file_info.get("modifiedTime")
+
+            # converte data/hora do Google (RFC3339) para algo amigável
+            try:
+                dt = datetime.fromisoformat(mod_raw.replace("Z", "+00:00"))
+                data_mod = dt.strftime("%Y-%m-%d %H:%M")
+            except Exception:
+                data_mod = mod_raw
+
+            col_a, col_b, col_c = st.columns([5, 1, 1])
+
+            # Nome + data
+            with col_a:
+                st.write(f"📄 **{nome}**")
+                st.caption(f"salvo em {data_mod}")
+
+            # Botão Baixar
+            with col_b:
+                try:
+                    buf = download_history_file(file_id)
+                    data_bin = buf.getvalue()
+                    st.download_button(
+                        label="Baixar",
+                        data=data_bin,
+                        file_name=nome,
+                        mime=(
+                            "application/vnd.openxmlformats-officedocument."
+                            "spreadsheetml.sheet"
+                        ),
+                        key=f"baixar_{file_id}",
+                    )
+                except Exception as e:
+                    st.error(f"Erro ao baixar {nome}: {e}")
+
+            # Botão Excluir
+            with col_c:
+                if st.button("Excluir", key=f"excluir_{file_id}"):
+                    try:
+                        delete_history_file(file_id)
+                        st.success(f"Arquivo **{nome}** excluído com sucesso!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Erro ao excluir {nome}: {e}")
+
+        st.markdown("</div>", unsafe_allow_html=True)
