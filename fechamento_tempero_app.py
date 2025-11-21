@@ -612,6 +612,7 @@ def slugify(texto: str) -> str:
 def get_ano_mes(nome_periodo: str):
     """
     Extrai "YYYY-MM" do início do nome do período, se válido.
+    (Usado só para filtrar a aba de Caixa Diário na UI.)
     """
     if not nome_periodo:
         return None
@@ -916,7 +917,7 @@ df_caixa_global = st.session_state["df_caixa_global"].copy()
 
 ano_mes_ref = get_ano_mes(nome_periodo)
 
-# Filtra para o período (YYYY-MM) selecionado
+# Filtra para o período (YYYY-MM) selecionado NA UI da aba Caixa Diário
 if not df_caixa_global.empty and ano_mes_ref:
     datas = pd.to_datetime(df_caixa_global["Data"], errors="coerce")
     mask = datas.dt.strftime("%Y-%m") == ano_mes_ref
@@ -943,18 +944,10 @@ df_resumo_contas = pd.DataFrame()
 df_consolidado = pd.DataFrame()
 excel_buffer = None
 
-# Totais de dinheiro do período (para exibir mesmo sem extrato)
-df_din_validos_calc = df_dinheiro_periodo.copy()
-if not df_din_validos_calc.empty and "Valor" in df_din_validos_calc.columns:
-    df_din_validos_calc = df_din_validos_calc[df_din_validos_calc["Valor"] > 0]
-
-entradas_dinheiro_periodo = df_din_validos_calc.loc[
-    df_din_validos_calc["Tipo"] == "Entrada", "Valor"
-].sum()
-saidas_dinheiro_periodo = df_din_validos_calc.loc[
-    df_din_validos_calc["Tipo"] == "Saída", "Valor"
-].sum()
-saldo_dinheiro_periodo = entradas_dinheiro_periodo - saidas_dinheiro_periodo
+# Totais de dinheiro para fechamento (serão calculados com base nas datas dos extratos)
+entradas_dinheiro_periodo = 0.0
+saidas_dinheiro_periodo = 0.0
+saldo_dinheiro_periodo = 0.0
 
 if arquivo_itau and arquivo_pag:
     try:
@@ -965,6 +958,7 @@ if arquivo_itau and arquivo_pag:
         try:
             REGRAS_CATEGORIA = carregar_regras()
 
+            # Carrega extratos
             ent_itau, sai_itau, res_itau, mov_itau = carregar_extrato_itau_upload(
                 arquivo_itau
             )
@@ -972,16 +966,67 @@ if arquivo_itau and arquivo_pag:
                 arquivo_pag
             )
 
-            # Dinheiro do período já calculado acima
+            # ----------------------------------------
+            # Descobre os meses presentes nos extratos
+            # ----------------------------------------
+            movimentos_extratos = mov_itau + mov_pag
+
+            meses_extratos = set()
+            datas_extratos = []
+            for mov in movimentos_extratos:
+                d = mov.get("data")
+                if not d:
+                    continue
+                dt = pd.to_datetime(d, dayfirst=True, errors="coerce")
+                if pd.isna(dt):
+                    continue
+                datas_extratos.append(dt)
+                meses_extratos.add(dt.strftime("%Y-%m"))
+
+            if datas_extratos:
+                meses_extratos = sorted(meses_extratos)
+            else:
+                meses_extratos = []
+
+            # Filtra o livro-caixa global de dinheiro pelos mesmos meses
+            if not df_caixa_global.empty and meses_extratos:
+                datas_cash = pd.to_datetime(df_caixa_global["Data"], errors="coerce")
+                mask_cash = datas_cash.dt.strftime("%Y-%m").isin(meses_extratos)
+                df_dinheiro_periodo_fechar = df_caixa_global[mask_cash].copy()
+            else:
+                df_dinheiro_periodo_fechar = pd.DataFrame(
+                    columns=["Data", "Descrição", "Tipo", "Valor"]
+                )
+
+            # Totais de dinheiro para o(s) mesmo(s) mês(es) dos extratos
+            df_din_validos_calc = df_dinheiro_periodo_fechar.copy()
+            if not df_din_validos_calc.empty and "Valor" in df_din_validos_calc.columns:
+                df_din_validos_calc = df_din_validos_calc[
+                    df_din_validos_calc["Valor"] > 0
+                ]
+
+            entradas_dinheiro_periodo = df_din_validos_calc.loc[
+                df_din_validos_calc["Tipo"] == "Entrada", "Valor"
+            ].sum()
+            saidas_dinheiro_periodo = df_din_validos_calc.loc[
+                df_din_validos_calc["Tipo"] == "Saída", "Valor"
+            ].sum()
+            saldo_dinheiro_periodo = entradas_dinheiro_periodo - saidas_dinheiro_periodo
+
+            # ----------------------------------------
+            # Consolidado: Itaú + PagSeguro + Dinheiro
+            # ----------------------------------------
             entradas_totais = ent_itau + ent_pag + entradas_dinheiro_periodo
-            saidas_totais = sai_itau + sai_pag - saidas_dinheiro_periodo  # saídas negativas
+            # lembre: saídas do banco já vêm negativas; dinheiro (Saída) foi somado positivo em saidas_dinheiro_periodo
+            saidas_totais = sai_itau + sai_pag - saidas_dinheiro_periodo
             resultado_consolidado = entradas_totais + saidas_totais
             saldo_final = saldo_inicial + resultado_consolidado
 
-            # Movimentos cartões
+            # ----------------------------------------
+            # Monta movimentos (Itaú + PagSeguro + Dinheiro)
+            # ----------------------------------------
             movimentos = mov_itau + mov_pag
 
-            # Movimentos de dinheiro (como conta "Dinheiro")
             if not df_din_validos_calc.empty:
                 for _, linha in df_din_validos_calc.iterrows():
                     valor = float(linha.get("Valor", 0.0) or 0.0)
@@ -1073,6 +1118,9 @@ if arquivo_itau and arquivo_pag:
                 ]
             )
 
+            # ----------------------------------------
+            # Excel (Resumo, Categorias, Movimentos, Dinheiro)
+            # ----------------------------------------
             buffer = BytesIO()
             with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
                 start_row_resumo = 3
@@ -1096,8 +1144,8 @@ if arquivo_itau and arquivo_pag:
                 # Movimentos
                 df_mov.to_excel(writer, sheet_name="Movimentos", index=False, startrow=1)
 
-                # Aba Dinheiro (somente mês do período)
-                df_dinheiro_periodo.to_excel(
+                # Aba Dinheiro (somente meses dos extratos)
+                df_dinheiro_periodo_fechar.to_excel(
                     writer, sheet_name="Dinheiro", index=False, startrow=1
                 )
 
@@ -1118,8 +1166,8 @@ if arquivo_itau and arquivo_pag:
                     formatar_tabela_excel(ws_cat, df_cat_export, start_row=1)
                 if not df_mov.empty:
                     formatar_tabela_excel(ws_mov, df_mov, start_row=1)
-                if not df_dinheiro_periodo.empty:
-                    formatar_tabela_excel(ws_din, df_dinheiro_periodo, start_row=1)
+                if not df_dinheiro_periodo_fechar.empty:
+                    formatar_tabela_excel(ws_din, df_dinheiro_periodo_fechar, start_row=1)
 
             buffer.seek(0)
             excel_buffer = buffer
@@ -1604,7 +1652,7 @@ with tab4:
         except Exception as e:
             st.error(f"Erro ao salvar caixa diário no Drive: {e}")
 
-    # Totais do mês (caixa)
+    # Totais do mês (caixa) apenas para exibição na aba
     df_din_calc = df_din_limpo.copy()
     if not df_din_calc.empty and "Valor" in df_din_calc.columns:
         df_din_calc = df_din_calc[df_din_calc["Valor"] > 0]
