@@ -16,157 +16,24 @@ from openpyxl.styles import Font, Alignment, PatternFill
 from openpyxl.utils import get_column_letter
 
 
-# ---------- Integração com Google Drive (histórico via OAuth) ----------
-
-def get_gdrive_service():
-    """
-    Cria o cliente da API do Google Drive usando OAuth (token.json embutido em st.secrets[gdrive_oauth]).
-    """
-    info = st.secrets["gdrive_oauth"]
-
-    scopes = info.get("scopes", ["https://www.googleapis.com/auth/drive"])
-    # Em TOML, 'scopes' chega como list ou string. Garante que seja list:
-    if isinstance(scopes, str):
-        scopes = [scopes]
-
-    creds = Credentials(
-        token=info["token"],
-        refresh_token=info.get("refresh_token"),
-        token_uri=info["token_uri"],
-        client_id=info["client_id"],
-        client_secret=info["client_secret"],
-        scopes=scopes,
-    )
-
-    service = build("drive", "v3", credentials=creds)
-    return service
-
-
-def get_history_folder_id(service):
-    """
-    Obtém (ou cria) a pasta de históricos no Google Drive.
-    Usa o nome definido em GDRIVE_FOLDER_NAME nos secrets (padrão: Tempero_Fechamentos).
-    """
-    if "gdrive_history_folder_id" in st.session_state:
-        return st.session_state["gdrive_history_folder_id"]
-
-    folder_name = st.secrets.get("GDRIVE_FOLDER_NAME", "Tempero_Fechamentos")
-
-    query = (
-        f"mimeType = 'application/vnd.google-apps.folder' "
-        f"and name = '{folder_name}' and trashed = false"
-    )
-
-    results = (
-        service.files()
-        .list(
-            q=query,
-            spaces="drive",
-            fields="files(id, name)",
-            pageSize=10,
-        )
-        .execute()
-    )
-    files = results.get("files", [])
-    if files:
-        folder_id = files[0]["id"]
-    else:
-        file_metadata = {
-            "name": folder_name,
-            "mimeType": "application/vnd.google-apps.folder",
-        }
-        folder = service.files().create(body=file_metadata, fields="id").execute()
-        folder_id = folder["id"]
-
-    st.session_state["gdrive_history_folder_id"] = folder_id
-    return folder_id
-
-
-def upload_history_to_gdrive(buffer: BytesIO, filename: str):
-    """
-    Envia o arquivo Excel do fechamento para a pasta de históricos no Google Drive.
-    """
-    service = get_gdrive_service()
-    folder_id = get_history_folder_id(service)
-
-    buffer.seek(0)
-    media = MediaIoBaseUpload(
-        buffer,
-        mimetype=(
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        ),
-        resumable=False,
-    )
-    file_metadata = {"name": filename, "parents": [folder_id]}
-    file = (
-        service.files()
-        .create(body=file_metadata, media_body=media, fields="id, name")
-        .execute()
-    )
-    return file["id"]
-
-
-def list_history_from_gdrive():
-    """
-    Lista os arquivos de fechamento salvos na pasta de históricos no Google Drive.
-    Retorna uma lista de dicts com: id, name, modifiedTime.
-    """
-    service = get_gdrive_service()
-    folder_id = get_history_folder_id(service)
-
-    query = f"'{folder_id}' in parents and trashed = false"
-    results = (
-        service.files()
-        .list(
-            q=query,
-            spaces="drive",
-            fields="files(id, name, modifiedTime)",
-            orderBy="modifiedTime desc",
-            pageSize=100,
-        )
-        .execute()
-    )
-    return results.get("files", [])
-
-
-def download_history_file(file_id: str) -> BytesIO:
-    """
-    Faz download de um arquivo de histórico do Google Drive e retorna um BytesIO.
-    """
-    service = get_gdrive_service()
-    request = service.files().get_media(fileId=file_id)
-    buf = BytesIO()
-    downloader = MediaIoBaseDownload(buf, request)
-    done = False
-    while not done:
-        status, done = downloader.next_chunk()
-    buf.seek(0)
-    return buf
-
-
-def delete_history_file(file_id: str):
-    """
-    Exclui um arquivo de histórico do Google Drive.
-    """
-    service = get_gdrive_service()
-    service.files().delete(fileId=file_id).execute()
-
-
-# ---------- Caminhos de arquivos auxiliares ----------
+# ========================
+#  Configurações e paths
+# ========================
 
 RULES_PATH = Path("regras_categorias.json")
 CATEGORIAS_PATH = Path("categorias_personalizadas.json")
-
-# dicionário global de regras aprendidas (carregado em runtime)
-REGRAS_CATEGORIA = {}
-
-
-# ---------- Estilo Tempero (rosa médio) ----------
 
 PRIMARY_COLOR = "#F06BAA"     # rosa médio
 BACKGROUND_SOFT = "#FDF2F7"   # rosinha de fundo
 TEXT_DARK = "#333333"
 
+# dicionário global de regras (carregado em runtime)
+REGRAS_CATEGORIA = {}
+
+
+# ========================
+#  Estilo (CSS)
+# ========================
 
 def inject_css():
     st.markdown(
@@ -241,7 +108,9 @@ def inject_css():
     )
 
 
-# ---------- Função de formatação genérica para tabelas no Excel ----------
+# ========================
+#  Formatação Excel
+# ========================
 
 def formatar_tabela_excel(ws, df, start_row=1):
     """
@@ -287,10 +156,11 @@ def formatar_tabela_excel(ws, df, start_row=1):
                     cell.number_format = '"R$" #,##0.00'
 
 
-# ---------- Autenticação simples por senha (via secrets) ----------
+# ========================
+#  Autenticação simples
+# ========================
 
 def check_auth():
-    # Se já autenticou em uma execução anterior, segue o fluxo normal
     if st.session_state.get("auth_ok"):
         return
 
@@ -321,7 +191,9 @@ def check_auth():
     st.stop()
 
 
-# ---------- Funções de base ----------
+# ========================
+#  Funções auxiliares
+# ========================
 
 def parse_numero_br(valor):
     if valor is None:
@@ -593,7 +465,9 @@ def carregar_extrato_pagseguro_upload(uploaded_file):
     return entradas, saidas, resultado, movimentos
 
 
-# ---------- Regras de categorização & categorias personalizadas ----------
+# ========================
+#  Regras de categorização
+# ========================
 
 def carregar_regras():
     if RULES_PATH.exists():
@@ -735,7 +609,257 @@ def slugify(texto: str) -> str:
     return s.strip("_") or "periodo"
 
 
-# ---------- Configuração geral Streamlit ----------
+def get_ano_mes(nome_periodo: str):
+    """
+    Extrai "YYYY-MM" do início do nome do período, se válido.
+    """
+    if not nome_periodo:
+        return None
+    parte = nome_periodo.strip()[:7]
+    try:
+        datetime.strptime(parte, "%Y-%m")
+        return parte
+    except Exception:
+        return None
+
+
+# ========================
+#  Google Drive (OAuth)
+# ========================
+
+def get_gdrive_service():
+    """
+    Cria o cliente da API do Google Drive usando OAuth (token embutido em st.secrets[gdrive_oauth]).
+    """
+    info = st.secrets["gdrive_oauth"]
+
+    scopes = info.get("scopes", ["https://www.googleapis.com/auth/drive"])
+    if isinstance(scopes, str):
+        scopes = [scopes]
+
+    creds = Credentials(
+        token=info["token"],
+        refresh_token=info.get("refresh_token"),
+        token_uri=info["token_uri"],
+        client_id=info["client_id"],
+        client_secret=info["client_secret"],
+        scopes=scopes,
+    )
+
+    service = build("drive", "v3", credentials=creds)
+    return service
+
+
+def get_history_folder_id(service):
+    """
+    Obtém (ou cria) a pasta de históricos no Google Drive.
+    Usa o nome definido em GDRIVE_FOLDER_NAME nos secrets (padrão: Tempero_Fechamentos).
+    """
+    if "gdrive_history_folder_id" in st.session_state:
+        return st.session_state["gdrive_history_folder_id"]
+
+    folder_name = st.secrets.get("GDRIVE_FOLDER_NAME", "Tempero_Fechamentos")
+
+    query = (
+        f"mimeType = 'application/vnd.google-apps.folder' "
+        f"and name = '{folder_name}' and trashed = false"
+    )
+
+    results = (
+        service.files()
+        .list(
+            q=query,
+            spaces="drive",
+            fields="files(id, name)",
+            pageSize=10,
+        )
+        .execute()
+    )
+    files = results.get("files", [])
+    if files:
+        folder_id = files[0]["id"]
+    else:
+        file_metadata = {
+            "name": folder_name,
+            "mimeType": "application/vnd.google-apps.folder",
+        }
+        folder = service.files().create(body=file_metadata, fields="id").execute()
+        folder_id = folder["id"]
+
+    st.session_state["gdrive_history_folder_id"] = folder_id
+    return folder_id
+
+
+def upload_history_to_gdrive(buffer: BytesIO, filename: str):
+    """
+    Envia o arquivo Excel do fechamento para a pasta de históricos no Google Drive.
+    """
+    service = get_gdrive_service()
+    folder_id = get_history_folder_id(service)
+
+    buffer.seek(0)
+    media = MediaIoBaseUpload(
+        buffer,
+        mimetype=(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ),
+        resumable=False,
+    )
+    file_metadata = {"name": filename, "parents": [folder_id]}
+    file = (
+        service.files()
+        .create(body=file_metadata, media_body=media, fields="id, name")
+        .execute()
+    )
+    return file["id"]
+
+
+def list_history_from_gdrive():
+    """
+    Lista os arquivos de fechamento salvos na pasta de históricos no Google Drive.
+    Retorna uma lista de dicts com: id, name, modifiedTime.
+    """
+    service = get_gdrive_service()
+    folder_id = get_history_folder_id(service)
+
+    query = f"'{folder_id}' in parents and trashed = false"
+    results = (
+        service.files()
+        .list(
+            q=query,
+            spaces="drive",
+            fields="files(id, name, modifiedTime)",
+            orderBy="modifiedTime desc",
+            pageSize=100,
+        )
+        .execute()
+    )
+    return results.get("files", [])
+
+
+def download_history_file(file_id: str) -> BytesIO:
+    """
+    Faz download de um arquivo de histórico do Google Drive e retorna um BytesIO.
+    """
+    service = get_gdrive_service()
+    request = service.files().get_media(fileId=file_id)
+    buf = BytesIO()
+    downloader = MediaIoBaseDownload(buf, request)
+    done = False
+    while not done:
+        status, done = downloader.next_chunk()
+    buf.seek(0)
+    return buf
+
+
+def delete_history_file(file_id: str):
+    """
+    Exclui um arquivo de histórico do Google Drive.
+    """
+    service = get_gdrive_service()
+    service.files().delete(fileId=file_id).execute()
+
+
+# ========================
+#  Livro-caixa de dinheiro no Drive
+# ========================
+
+def get_cash_file_name():
+    return st.secrets.get("GDRIVE_CASH_FILE_NAME", "caixa_dinheiro.xlsx")
+
+
+def get_cash_file_id(service, folder_id):
+    """
+    Procura o arquivo de caixa de dinheiro dentro da pasta de históricos.
+    """
+    filename = get_cash_file_name()
+    query = (
+        f"'{folder_id}' in parents and name = '{filename}' and trashed = false"
+    )
+    results = (
+        service.files()
+        .list(
+            q=query,
+            spaces="drive",
+            fields="files(id, name)",
+            pageSize=10,
+        )
+        .execute()
+    )
+    files = results.get("files", [])
+    if files:
+        return files[0]["id"]
+    return None
+
+
+def load_cash_from_gdrive():
+    """
+    Lê o livro-caixa de dinheiro (caixa_dinheiro.xlsx) do Drive.
+    Se não existir, retorna DataFrame vazio com colunas padrão.
+    """
+    service = get_gdrive_service()
+    folder_id = get_history_folder_id(service)
+    file_id = get_cash_file_id(service, folder_id)
+
+    if not file_id:
+        return pd.DataFrame(columns=["Data", "Descrição", "Tipo", "Valor"])
+
+    request = service.files().get_media(fileId=file_id)
+    buf = BytesIO()
+    downloader = MediaIoBaseDownload(buf, request)
+    done = False
+    while not done:
+        status, done = downloader.next_chunk()
+    buf.seek(0)
+
+    df = pd.read_excel(buf)
+
+    # Normaliza colunas
+    cols = [str(c).strip() for c in df.columns]
+    df.columns = cols
+
+    for col in ["Data", "Descrição", "Tipo", "Valor"]:
+        if col not in df.columns:
+            df[col] = None
+
+    df = df[["Data", "Descrição", "Tipo", "Valor"]]
+    return df
+
+
+def save_cash_to_gdrive(df: pd.DataFrame):
+    """
+    Salva (ou atualiza) o livro-caixa de dinheiro no Drive.
+    """
+    service = get_gdrive_service()
+    folder_id = get_history_folder_id(service)
+    file_id = get_cash_file_id(service, folder_id)
+    filename = get_cash_file_name()
+
+    buffer = BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        df.to_excel(writer, sheet_name="CaixaDinheiro", index=False)
+    buffer.seek(0)
+
+    media = MediaIoBaseUpload(
+        buffer,
+        mimetype=(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ),
+        resumable=False,
+    )
+
+    if file_id:
+        service.files().update(fileId=file_id, media_body=media).execute()
+    else:
+        file_metadata = {"name": filename, "parents": [folder_id]}
+        service.files().create(
+            body=file_metadata, media_body=media, fields="id"
+        ).execute()
+
+
+# ========================
+#  Config Streamlit
+# ========================
 
 st.set_page_config(page_title="Fechamento Tempero das Gurias", layout="wide")
 inject_css()
@@ -746,12 +870,11 @@ st.markdown(
     unsafe_allow_html=True,
 )
 st.markdown(
-    '<div class="tempero-subtitle">Fechamento mensal, conferência de categorias e histórico da loja em um único lugar.</div>',
+    '<div class="tempero-subtitle">Fechamento mensal, caixa diário e histórico da loja em um único lugar.</div>',
     unsafe_allow_html=True,
 )
 
-# ---------- Barra lateral ----------
-
+# Barra lateral
 st.sidebar.header("Configurações do período")
 
 arquivo_itau = st.sidebar.file_uploader(
@@ -777,7 +900,35 @@ st.sidebar.markdown(
     "Feito para a **Tempero das Gurias** 💕\n\n"
 )
 
-# ---------- Cálculos principais (compartilhados entre as abas) ----------
+# ========================
+#  Carrega livro-caixa global de dinheiro
+# ========================
+
+if "df_caixa_global" not in st.session_state:
+    try:
+        st.session_state["df_caixa_global"] = load_cash_from_gdrive()
+    except Exception:
+        st.session_state["df_caixa_global"] = pd.DataFrame(
+            columns=["Data", "Descrição", "Tipo", "Valor"]
+        )
+
+df_caixa_global = st.session_state["df_caixa_global"].copy()
+
+ano_mes_ref = get_ano_mes(nome_periodo)
+
+# Filtra para o período (YYYY-MM) selecionado
+if not df_caixa_global.empty and ano_mes_ref:
+    datas = pd.to_datetime(df_caixa_global["Data"], errors="coerce")
+    mask = datas.dt.strftime("%Y-%m") == ano_mes_ref
+    df_dinheiro_periodo = df_caixa_global[mask].copy()
+else:
+    df_dinheiro_periodo = pd.DataFrame(
+        columns=["Data", "Descrição", "Tipo", "Valor"]
+    )
+
+# ========================
+#  Cálculos principais
+# ========================
 
 dados_carregados = False
 mensagem_erro = None
@@ -792,12 +943,18 @@ df_resumo_contas = pd.DataFrame()
 df_consolidado = pd.DataFrame()
 excel_buffer = None
 
-# Lançamentos em dinheiro vinculados ao período atual (carregados do session_state)
-dinheiro_state_key = f"dinheiro_{nome_periodo}"
-if dinheiro_state_key in st.session_state:
-    df_dinheiro_base = st.session_state[dinheiro_state_key].copy()
-else:
-    df_dinheiro_base = pd.DataFrame(columns=["Data", "Descrição", "Tipo", "Valor"])
+# Totais de dinheiro do período (para exibir mesmo sem extrato)
+df_din_validos_calc = df_dinheiro_periodo.copy()
+if not df_din_validos_calc.empty and "Valor" in df_din_validos_calc.columns:
+    df_din_validos_calc = df_din_validos_calc[df_din_validos_calc["Valor"] > 0]
+
+entradas_dinheiro_periodo = df_din_validos_calc.loc[
+    df_din_validos_calc["Tipo"] == "Entrada", "Valor"
+].sum()
+saidas_dinheiro_periodo = df_din_validos_calc.loc[
+    df_din_validos_calc["Tipo"] == "Saída", "Valor"
+].sum()
+saldo_dinheiro_periodo = entradas_dinheiro_periodo - saidas_dinheiro_periodo
 
 if arquivo_itau and arquivo_pag:
     try:
@@ -815,33 +972,16 @@ if arquivo_itau and arquivo_pag:
                 arquivo_pag
             )
 
-            # Dinheiro – considera apenas linhas com valor > 0
-            df_din_validos_calc = df_dinheiro_base.copy()
-            if not df_din_validos_calc.empty and "Valor" in df_din_validos_calc.columns:
-                df_din_validos_calc = df_din_validos_calc[
-                    df_din_validos_calc["Valor"] > 0
-                ]
-            else:
-                df_din_validos_calc = pd.DataFrame(
-                    columns=["Data", "Descrição", "Tipo", "Valor"]
-                )
-
-            entradas_dinheiro_calc = df_din_validos_calc.loc[
-                df_din_validos_calc["Tipo"] == "Entrada", "Valor"
-            ].sum()
-            saidas_dinheiro_calc = df_din_validos_calc.loc[
-                df_din_validos_calc["Tipo"] == "Saída", "Valor"
-            ].sum()
-
-            entradas_totais = ent_itau + ent_pag + entradas_dinheiro_calc
-            saidas_totais = sai_itau + sai_pag - saidas_dinheiro_calc  # saídas negativas
+            # Dinheiro do período já calculado acima
+            entradas_totais = ent_itau + ent_pag + entradas_dinheiro_periodo
+            saidas_totais = sai_itau + sai_pag - saidas_dinheiro_periodo  # saídas negativas
             resultado_consolidado = entradas_totais + saidas_totais
             saldo_final = saldo_inicial + resultado_consolidado
 
             # Movimentos cartões
             movimentos = mov_itau + mov_pag
 
-            # Movimentos de dinheiro (entram como conta "Dinheiro")
+            # Movimentos de dinheiro (como conta "Dinheiro")
             if not df_din_validos_calc.empty:
                 for _, linha in df_din_validos_calc.iterrows():
                     valor = float(linha.get("Valor", 0.0) or 0.0)
@@ -912,6 +1052,12 @@ if arquivo_itau and arquivo_pag:
                         "Saídas": sai_pag,
                         "Resultado": res_pag,
                     },
+                    {
+                        "Conta": "Dinheiro",
+                        "Entradas": entradas_dinheiro_periodo,
+                        "Saídas": -saidas_dinheiro_periodo,
+                        "Resultado": saldo_dinheiro_periodo,
+                    },
                 ]
             )
             df_consolidado = pd.DataFrame(
@@ -950,8 +1096,8 @@ if arquivo_itau and arquivo_pag:
                 # Movimentos
                 df_mov.to_excel(writer, sheet_name="Movimentos", index=False, startrow=1)
 
-                # Aba Dinheiro (lançamentos brutos)
-                df_dinheiro_base.to_excel(
+                # Aba Dinheiro (somente mês do período)
+                df_dinheiro_periodo.to_excel(
                     writer, sheet_name="Dinheiro", index=False, startrow=1
                 )
 
@@ -968,10 +1114,12 @@ if arquivo_itau and arquivo_pag:
 
                 formatar_tabela_excel(ws_res, df_resumo_contas, start_row=start_row_resumo)
                 formatar_tabela_excel(ws_res, df_consolidado, start_row=start_row_consol)
-                formatar_tabela_excel(ws_cat, df_cat_export, start_row=1)
-                formatar_tabela_excel(ws_mov, df_mov, start_row=1)
-                if not df_dinheiro_base.empty:
-                    formatar_tabela_excel(ws_din, df_dinheiro_base, start_row=1)
+                if not df_cat_export.empty:
+                    formatar_tabela_excel(ws_cat, df_cat_export, start_row=1)
+                if not df_mov.empty:
+                    formatar_tabela_excel(ws_mov, df_mov, start_row=1)
+                if not df_dinheiro_periodo.empty:
+                    formatar_tabela_excel(ws_din, df_dinheiro_periodo, start_row=1)
 
             buffer.seek(0)
             excel_buffer = buffer
@@ -982,10 +1130,17 @@ if arquivo_itau and arquivo_pag:
             mensagem_erro = str(e)
 
 
-# ---------- Abas ----------
+# ========================
+#  Abas
+# ========================
 
-tab1, tab2, tab3 = st.tabs(
-    ["💗 Fechamento Mensal", "🧾 Conferência & Categorias", "📊 Histórico & Comparativos"]
+tab1, tab2, tab3, tab4 = st.tabs(
+    [
+        "💗 Fechamento Mensal",
+        "🧾 Conferência & Categorias",
+        "📊 Histórico & Comparativos",
+        "💵 Caixa Diário",
+    ]
 )
 
 # ---------- ABA 1: Fechamento ----------
@@ -1043,7 +1198,7 @@ with tab1:
             unsafe_allow_html=True,
         )
         with st.container():
-            col_a, col_b = st.columns(2)
+            col_a, col_b, col_c = st.columns(3)
             with col_a:
                 st.markdown('<div class="tempero-card">', unsafe_allow_html=True)
                 st.markdown("**Itaú**")
@@ -1060,75 +1215,19 @@ with tab1:
                 st.write("Resultado:", format_currency(res_pag))
                 st.markdown("</div>", unsafe_allow_html=True)
 
-        # 💵 Lançamentos em dinheiro (editor)
-        st.markdown(
-            '<div class="tempero-section-title">💵 Lançamentos em Dinheiro (caixa físico)</div>',
-            unsafe_allow_html=True,
-        )
-        st.markdown(
-            '<div class="tempero-section-sub">Registre entradas e saídas em dinheiro. '
-            "Esses valores já entram no consolidado do período.</div>",
-            unsafe_allow_html=True,
-        )
-
-        if dinheiro_state_key not in st.session_state or st.session_state[
-            dinheiro_state_key
-        ].empty:
-            st.session_state[dinheiro_state_key] = pd.DataFrame(
-                [
-                    {
-                        "Data": datetime.today().date(),
-                        "Descrição": "",
-                        "Tipo": "Entrada",
-                        "Valor": 0.0,
-                    }
-                ]
-            )
-
-        df_dinheiro_ui = st.data_editor(
-            st.session_state[dinheiro_state_key],
-            num_rows="dynamic",
-            hide_index=True,
-            use_container_width=True,
-            column_config={
-                "Data": st.column_config.DateColumn("Data"),
-                "Descrição": st.column_config.TextColumn("Descrição"),
-                "Tipo": st.column_config.SelectboxColumn(
-                    "Tipo", options=["Entrada", "Saída"], required=True
-                ),
-                "Valor": st.column_config.NumberColumn(
-                    "Valor (R$)", step=0.01, min_value=0.0
-                ),
-            },
-            key=f"editor_dinheiro_{nome_periodo}",
-        )
-
-        st.session_state[dinheiro_state_key] = df_dinheiro_ui
-
-        df_din_validos_ui = df_dinheiro_ui.copy()
-        if not df_din_validos_ui.empty and "Valor" in df_din_validos_ui.columns:
-            df_din_validos_ui = df_din_validos_ui[df_din_validos_ui["Valor"] > 0]
-
-        entradas_dinheiro_ui = df_din_validos_ui.loc[
-            df_din_validos_ui["Tipo"] == "Entrada", "Valor"
-        ].sum()
-        saidas_dinheiro_ui = df_din_validos_ui.loc[
-            df_din_validos_ui["Tipo"] == "Saída", "Valor"
-        ].sum()
-
-        col_cd1, col_cd2, col_cd3 = st.columns(3)
-        with col_cd1:
-            st.write("Entradas em dinheiro:", format_currency(entradas_dinheiro_ui))
-        with col_cd2:
-            st.write(
-                "Saídas em dinheiro:",
-                format_currency(-saidas_dinheiro_ui) if saidas_dinheiro_ui else "R$ 0,00",
-            )
-        with col_cd3:
-            st.write(
-                "Saldo do dinheiro:",
-                format_currency(entradas_dinheiro_ui - saidas_dinheiro_ui),
-            )
+            with col_c:
+                st.markdown('<div class="tempero-card">', unsafe_allow_html=True)
+                st.markdown("**Dinheiro (caixa físico)**")
+                st.write("Entradas:", format_currency(entradas_dinheiro_periodo))
+                st.write(
+                    "Saídas  :",
+                    format_currency(-saidas_dinheiro_periodo)
+                    if saidas_dinheiro_periodo
+                    else "R$ 0,00",
+                )
+                st.write("Resultado:", format_currency(saldo_dinheiro_periodo))
+                st.caption("Edite os lançamentos na aba 💵 Caixa Diário.")
+                st.markdown("</div>", unsafe_allow_html=True)
 
         st.markdown("---")
 
@@ -1421,3 +1520,111 @@ with tab3:
                         st.error(f"Erro ao excluir {nome}: {e}")
 
         st.markdown("</div>", unsafe_allow_html=True)
+
+
+# ---------- ABA 4: Caixa Diário ----------
+
+with tab4:
+    st.markdown(
+        '<div class="tempero-section-title">💵 Caixa diário em dinheiro</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<div class="tempero-section-sub">'
+        "Registre aqui as entradas e saídas em dinheiro. "
+        "Esses lançamentos são salvos no Google Drive e usados nos fechamentos mensais."
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    if df_dinheiro_periodo.empty:
+        df_dinheiro_periodo = pd.DataFrame(
+            [
+                {
+                    "Data": datetime.today().date(),
+                    "Descrição": "",
+                    "Tipo": "Entrada",
+                    "Valor": 0.0,
+                }
+            ],
+            columns=["Data", "Descrição", "Tipo", "Valor"],
+        )
+
+    df_dinheiro_ui = st.data_editor(
+        df_dinheiro_periodo,
+        num_rows="dynamic",
+        hide_index=True,
+        use_container_width=True,
+        column_config={
+            "Data": st.column_config.DateColumn("Data"),
+            "Descrição": st.column_config.TextColumn("Descrição"),
+            "Tipo": st.column_config.SelectboxColumn(
+                "Tipo", options=["Entrada", "Saída"], required=True
+            ),
+            "Valor": st.column_config.NumberColumn(
+                "Valor (R$)", step=0.01, min_value=0.0
+            ),
+        },
+        key=f"editor_dinheiro_{ano_mes_ref or 'padrao'}",
+    )
+
+    # Limpa linhas sem valor e sem descrição
+    df_din_limpo = df_dinheiro_ui.copy()
+    if not df_din_limpo.empty:
+        df_din_limpo = df_din_limpo[
+            ~(
+                (df_din_limpo["Valor"].fillna(0) == 0)
+                & (df_din_limpo["Descrição"].fillna("").str.strip() == "")
+            )
+        ]
+
+    col_btn1, col_btn2 = st.columns([1, 3])
+    with col_btn1:
+        salvar_caixa = st.button("Salvar lançamentos de dinheiro")
+
+    if salvar_caixa:
+        try:
+            df_global = df_caixa_global.copy()
+
+            if ano_mes_ref:
+                datas = pd.to_datetime(df_global["Data"], errors="coerce")
+                mask = datas.dt.strftime("%Y-%m") == ano_mes_ref
+                df_outros_meses = df_global[~mask]
+            else:
+                df_outros_meses = df_global.iloc[0:0]
+
+            df_novo_global = pd.concat(
+                [df_outros_meses, df_din_limpo], ignore_index=True
+            )
+
+            st.session_state["df_caixa_global"] = df_novo_global
+            save_cash_to_gdrive(df_novo_global)
+            st.success("Lançamentos de dinheiro salvos com sucesso no Google Drive!")
+            st.rerun()
+        except Exception as e:
+            st.error(f"Erro ao salvar caixa diário no Drive: {e}")
+
+    # Totais do mês (caixa)
+    df_din_calc = df_din_limpo.copy()
+    if not df_din_calc.empty and "Valor" in df_din_calc.columns:
+        df_din_calc = df_din_calc[df_din_calc["Valor"] > 0]
+
+    entradas_d = df_din_calc.loc[
+        df_din_calc["Tipo"] == "Entrada", "Valor"
+    ].sum()
+    saidas_d = df_din_calc.loc[
+        df_din_calc["Tipo"] == "Saída", "Valor"
+    ].sum()
+    saldo_d = entradas_d - saidas_d
+
+    st.markdown("---")
+    col_c1, col_c2, col_c3 = st.columns(3)
+    with col_c1:
+        st.write("Entradas em dinheiro no período:", format_currency(entradas_d))
+    with col_c2:
+        st.write(
+            "Saídas em dinheiro no período:",
+            format_currency(-saidas_d) if saidas_d else "R$ 0,00",
+        )
+    with col_c3:
+        st.write("Saldo do dinheiro no período:", format_currency(saldo_d))
