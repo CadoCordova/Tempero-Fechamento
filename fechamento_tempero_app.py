@@ -5,7 +5,6 @@ from io import BytesIO
 from datetime import datetime
 import json
 
-
 import pandas as pd
 import streamlit as st
 
@@ -41,6 +40,7 @@ def get_gdrive_service():
 
     service = build("drive", "v3", credentials=creds)
     return service
+
 
 def get_history_folder_id(service):
     """
@@ -108,7 +108,7 @@ def upload_history_to_gdrive(buffer: BytesIO, filename: str):
 
 def list_history_from_gdrive():
     """
-    Lista os arquivos de fechamento salvos na pasta de históricos do Google Drive.
+    Lista os arquivos de fechamento salvos na pasta de históricos no Google Drive.
     Retorna uma lista de dicts com: id, name, modifiedTime.
     """
     service = get_gdrive_service()
@@ -151,6 +151,7 @@ def delete_history_file(file_id: str):
     service = get_gdrive_service()
     service.files().delete(fileId=file_id).execute()
 
+
 # ---------- Caminhos de arquivos auxiliares ----------
 
 RULES_PATH = Path("regras_categorias.json")
@@ -173,24 +174,24 @@ def inject_css():
         <style>
         .block-container {{
             max-width: 1200px;
-            padding-top: 3.5rem;        /* mais espaço no topo */
+            padding-top: 3.5rem;
             padding-bottom: 2.5rem;
         }}
         body {{
             background-color: {BACKGROUND_SOFT};
         }}
         .tempero-title {{
-            font-size: 1.8rem;          /* um tiquinho menor pra não estourar */
+            font-size: 1.8rem;
             font-weight: 800;
             color: {PRIMARY_COLOR};
             margin-bottom: 0.3rem;
-            text-align: center;         /* centraliza o título */
+            text-align: center;
         }}
         .tempero-subtitle {{
             font-size: 0.95rem;
             color: #666666;
             margin-bottom: 1.2rem;
-            text-align: center;         /* centraliza o subtítulo também */
+            text-align: center;
         }}
         .tempero-card {{
             background-color: #FFFFFF;
@@ -293,7 +294,6 @@ def check_auth():
     if st.session_state.get("auth_ok"):
         return
 
-    # Tela de login
     inject_css()
     st.markdown(
         '<div class="tempero-title">Tempero das Gurias - Acesso Restrito</div>',
@@ -313,13 +313,11 @@ def check_auth():
         if senha_correta is None:
             st.error("Senha não configurada no Streamlit Secrets (APP_PASSWORD).")
         elif senha == senha_correta:
-            # Marca como autenticado e recarrega a página
             st.session_state["auth_ok"] = True
             st.rerun()
         else:
             st.error("Senha incorreta. Tente novamente.")
 
-    # Se chegou aqui, ainda não está autenticado -> interrompe o app
     st.stop()
 
 
@@ -367,7 +365,6 @@ def extrair_descricao_linha(linha: dict):
 
     partes = []
 
-    # 1) colunas de histórico/descrição
     for k, v in linha.items():
         if not isinstance(k, str):
             continue
@@ -380,7 +377,6 @@ def extrair_descricao_linha(linha: dict):
         if "HIST" in kl or "DESCR" in kl:
             partes.append(vs)
 
-    # 2) complementa com outros campos textuais
     candidatos_ignorados = [
         "DATA",
         "VALOR",
@@ -422,27 +418,18 @@ def extrair_descricao_linha(linha: dict):
 
 def ler_arquivo_tabela_upload(uploaded_file):
     """
-    Lê CSV/XLSX de bancos (Itaú, PagSeguro etc) aceitando o extrato ORIGINAL,
-    mesmo com cabeçalho e informações antes da tabela.
-
-    Regra:
-    - Procura a linha que contém 'Data' e alguma coluna típica
-      ('Lançamento', 'Descrição', 'Tipo'...) e usa essa linha como cabeçalho.
+    Lê CSV/XLSX de bancos aceitando o extrato ORIGINAL, mesmo com cabeçalho e
+    informações antes da tabela.
     """
     suffix = Path(uploaded_file.name).suffix.lower()
 
-    # --- CSV normal ---------------------------------------------------------
     if suffix in (".csv", ".txt"):
         df = pd.read_csv(uploaded_file, sep=";")
-
-    # --- Excel (Itaú, PagSeguro etc) ----------------------------------------
     elif suffix in (".xlsx", ".xls"):
-        # Lê tudo sem cabeçalho para poder localizar a linha real de header
         raw = pd.read_excel(uploaded_file, header=None)
 
         header_idx = None
         for i, row in raw.iterrows():
-            # normaliza valores da linha para maiúsculo, ignorando NaN
             valores = [
                 str(x).strip().upper()
                 for x in row.tolist()
@@ -451,7 +438,6 @@ def ler_arquivo_tabela_upload(uploaded_file):
             if not valores:
                 continue
 
-            # Linha candidata a cabeçalho: TEM "DATA" + (LANÇAMENTO / DESCRIÇÃO / TIPO)
             if "DATA" in valores and any(
                 col in valores
                 for col in [
@@ -467,7 +453,6 @@ def ler_arquivo_tabela_upload(uploaded_file):
                 break
 
         if header_idx is not None:
-            # Monta os nomes das colunas a partir dessa linha
             header_row = raw.iloc[header_idx].tolist()
             cols = []
             for v in header_row:
@@ -478,21 +463,16 @@ def ler_arquivo_tabela_upload(uploaded_file):
                 else:
                     cols.append(str(v))
 
-            # Dados = tudo que vem depois do cabeçalho
             df = raw.iloc[header_idx + 1 :].copy()
             df.columns = cols
             df = df.dropna(how="all").reset_index(drop=True)
         else:
-            # fallback: comportamento antigo (caso o arquivo já venha limpo)
             df = pd.read_excel(uploaded_file)
-
     else:
         raise RuntimeError(f"Formato não suportado: {suffix}. Use .csv ou .xlsx.")
 
-    # normaliza nomes das colunas
     df = df.rename(columns=lambda c: str(c).strip())
 
-    # transforma em lista de dicionários como antes
     records = df.to_dict(orient="records")
     linhas = []
     for rec in records:
@@ -517,7 +497,6 @@ def carregar_extrato_itau_upload(uploaded_file):
         descricao = extrair_descricao_linha(linha)
         desc_norm = normalizar_texto(descricao)
 
-        # Ignora linhas de saldo / resumo
         if (
             "SALDO ANTERIOR" in desc_norm
             or "SALDO TOTAL DISPONIVEL DIA" in desc_norm
@@ -577,7 +556,6 @@ def carregar_extrato_pagseguro_upload(uploaded_file):
         descricao = extrair_descricao_linha(linha)
         desc_norm = normalizar_texto(descricao)
 
-        # Ignora linhas de saldo
         if "SALDO DO DIA" in desc_norm or "SALDO DIA" in desc_norm:
             continue
 
@@ -656,13 +634,11 @@ def classificar_categoria(mov):
     desc_norm = normalizar_texto(desc_orig)
     valor = mov.get("valor", 0.0)
 
-    # Regras aprendidas (prioridade máxima)
     if REGRAS_CATEGORIA:
         for padrao, categoria in REGRAS_CATEGORIA.items():
             if padrao in desc_norm:
                 return categoria
 
-    # Regras fixas
     if "ANTINSECT" in desc_norm:
         return "Dedetização / Controle de Pragas"
 
@@ -799,7 +775,6 @@ nome_periodo = st.sidebar.text_input(
 st.sidebar.markdown("---")
 st.sidebar.markdown(
     "Feito para a **Tempero das Gurias** 💕\n\n"
-    ##"_Use este painel apenas internamente._"
 )
 
 # ---------- Cálculos principais (compartilhados entre as abas) ----------
@@ -817,6 +792,13 @@ df_resumo_contas = pd.DataFrame()
 df_consolidado = pd.DataFrame()
 excel_buffer = None
 
+# Lançamentos em dinheiro vinculados ao período atual (carregados do session_state)
+dinheiro_state_key = f"dinheiro_{nome_periodo}"
+if dinheiro_state_key in st.session_state:
+    df_dinheiro_base = st.session_state[dinheiro_state_key].copy()
+else:
+    df_dinheiro_base = pd.DataFrame(columns=["Data", "Descrição", "Tipo", "Valor"])
+
 if arquivo_itau and arquivo_pag:
     try:
         saldo_inicial = parse_numero_br(saldo_inicial_input)
@@ -824,18 +806,57 @@ if arquivo_itau and arquivo_pag:
         mensagem_erro = "Saldo inicial inválido. Use formato 1234,56 ou 1234.56."
     else:
         try:
-            # carrega regras aprendidas
             REGRAS_CATEGORIA = carregar_regras()
 
-            ent_itau, sai_itau, res_itau, mov_itau = carregar_extrato_itau_upload(arquivo_itau)
-            ent_pag, sai_pag, res_pag, mov_pag = carregar_extrato_pagseguro_upload(arquivo_pag)
+            ent_itau, sai_itau, res_itau, mov_itau = carregar_extrato_itau_upload(
+                arquivo_itau
+            )
+            ent_pag, sai_pag, res_pag, mov_pag = carregar_extrato_pagseguro_upload(
+                arquivo_pag
+            )
 
-            entradas_totais = ent_itau + ent_pag
-            saidas_totais = sai_itau + sai_pag
+            # Dinheiro – considera apenas linhas com valor > 0
+            df_din_validos_calc = df_dinheiro_base.copy()
+            if not df_din_validos_calc.empty and "Valor" in df_din_validos_calc.columns:
+                df_din_validos_calc = df_din_validos_calc[
+                    df_din_validos_calc["Valor"] > 0
+                ]
+            else:
+                df_din_validos_calc = pd.DataFrame(
+                    columns=["Data", "Descrição", "Tipo", "Valor"]
+                )
+
+            entradas_dinheiro_calc = df_din_validos_calc.loc[
+                df_din_validos_calc["Tipo"] == "Entrada", "Valor"
+            ].sum()
+            saidas_dinheiro_calc = df_din_validos_calc.loc[
+                df_din_validos_calc["Tipo"] == "Saída", "Valor"
+            ].sum()
+
+            entradas_totais = ent_itau + ent_pag + entradas_dinheiro_calc
+            saidas_totais = sai_itau + sai_pag - saidas_dinheiro_calc  # saídas negativas
             resultado_consolidado = entradas_totais + saidas_totais
             saldo_final = saldo_inicial + resultado_consolidado
 
+            # Movimentos cartões
             movimentos = mov_itau + mov_pag
+
+            # Movimentos de dinheiro (entram como conta "Dinheiro")
+            if not df_din_validos_calc.empty:
+                for _, linha in df_din_validos_calc.iterrows():
+                    valor = float(linha.get("Valor", 0.0) or 0.0)
+                    tipo = str(linha.get("Tipo", "Entrada"))
+                    if tipo == "Saída":
+                        valor = -valor
+                    movimentos.append(
+                        {
+                            "data": linha.get("Data"),
+                            "descricao": linha.get("Descrição"),
+                            "valor": valor,
+                            "conta": "Dinheiro",
+                        }
+                    )
+
             movimentos_cat = []
             for mov in movimentos:
                 cat = classificar_categoria(mov)
@@ -852,7 +873,6 @@ if arquivo_itau and arquivo_pag:
 
             df_mov = pd.DataFrame(movimentos_cat)
 
-            # resumo por categoria
             entradas_cat = defaultdict(float)
             saidas_cat = defaultdict(float)
             for _, row in df_mov.iterrows():
@@ -863,7 +883,9 @@ if arquivo_itau and arquivo_pag:
                 elif v < 0:
                     saidas_cat[cat] += v
 
-            categorias_calc = sorted(set(list(entradas_cat.keys()) + list(saidas_cat.keys())))
+            categorias_calc = sorted(
+                set(list(entradas_cat.keys()) + list(saidas_cat.keys()))
+            )
             dados_cat = []
             for cat in categorias_calc:
                 dados_cat.append(
@@ -876,11 +898,20 @@ if arquivo_itau and arquivo_pag:
 
             df_cat_export = pd.DataFrame(dados_cat)
 
-            # resumos
             df_resumo_contas = pd.DataFrame(
                 [
-                    {"Conta": "Itaú", "Entradas": ent_itau, "Saídas": sai_itau, "Resultado": res_itau},
-                    {"Conta": "PagSeguro", "Entradas": ent_pag, "Saídas": sai_pag, "Resultado": res_pag},
+                    {
+                        "Conta": "Itaú",
+                        "Entradas": ent_itau,
+                        "Saídas": sai_itau,
+                        "Resultado": res_itau,
+                    },
+                    {
+                        "Conta": "PagSeguro",
+                        "Entradas": ent_pag,
+                        "Saídas": sai_pag,
+                        "Resultado": res_pag,
+                    },
                 ]
             )
             df_consolidado = pd.DataFrame(
@@ -896,7 +927,6 @@ if arquivo_itau and arquivo_pag:
                 ]
             )
 
-            # gera excel já aqui para ser usado na aba de fechamento
             buffer = BytesIO()
             with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
                 start_row_resumo = 3
@@ -909,19 +939,27 @@ if arquivo_itau and arquivo_pag:
                     writer, sheet_name="Resumo", index=False, startrow=start_row_consol
                 )
 
-                # aba técnica
+                # Aba técnica
                 df_consolidado.to_excel(writer, sheet_name="ResumoDados", index=False)
 
                 # Categorias
-                df_cat_export.to_excel(writer, sheet_name="Categorias", index=False, startrow=1)
+                df_cat_export.to_excel(
+                    writer, sheet_name="Categorias", index=False, startrow=1
+                )
 
                 # Movimentos
                 df_mov.to_excel(writer, sheet_name="Movimentos", index=False, startrow=1)
+
+                # Aba Dinheiro (lançamentos brutos)
+                df_dinheiro_base.to_excel(
+                    writer, sheet_name="Dinheiro", index=False, startrow=1
+                )
 
                 wb = writer.book
                 ws_res = writer.sheets["Resumo"]
                 ws_cat = writer.sheets["Categorias"]
                 ws_mov = writer.sheets["Movimentos"]
+                ws_din = writer.sheets["Dinheiro"]
 
                 titulo = f"Fechamento Tempero das Gurias - {nome_periodo}"
                 ws_res["A1"] = titulo
@@ -932,6 +970,8 @@ if arquivo_itau and arquivo_pag:
                 formatar_tabela_excel(ws_res, df_consolidado, start_row=start_row_consol)
                 formatar_tabela_excel(ws_cat, df_cat_export, start_row=1)
                 formatar_tabela_excel(ws_mov, df_mov, start_row=1)
+                if not df_dinheiro_base.empty:
+                    formatar_tabela_excel(ws_din, df_dinheiro_base, start_row=1)
 
             buffer.seek(0)
             excel_buffer = buffer
@@ -951,12 +991,17 @@ tab1, tab2, tab3 = st.tabs(
 # ---------- ABA 1: Fechamento ----------
 
 with tab1:
-    st.markdown('<div class="tempero-section-title">Resumo do período</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="tempero-section-title">Resumo do período</div>',
+        unsafe_allow_html=True,
+    )
 
     if mensagem_erro:
         st.error(mensagem_erro)
     elif not dados_carregados:
-        st.info("Envie os arquivos do Itaú e PagSeguro na barra lateral para ver o fechamento.")
+        st.info(
+            "Envie os arquivos do Itaú e PagSeguro na barra lateral para ver o fechamento."
+        )
     else:
         m1, m2, m3 = st.columns(3)
         with m1:
@@ -1015,6 +1060,78 @@ with tab1:
                 st.write("Resultado:", format_currency(res_pag))
                 st.markdown("</div>", unsafe_allow_html=True)
 
+        # 💵 Lançamentos em dinheiro (editor)
+        st.markdown(
+            '<div class="tempero-section-title">💵 Lançamentos em Dinheiro (caixa físico)</div>',
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            '<div class="tempero-section-sub">Registre entradas e saídas em dinheiro. '
+            "Esses valores já entram no consolidado do período.</div>",
+            unsafe_allow_html=True,
+        )
+
+        if dinheiro_state_key not in st.session_state or st.session_state[
+            dinheiro_state_key
+        ].empty:
+            st.session_state[dinheiro_state_key] = pd.DataFrame(
+                [
+                    {
+                        "Data": datetime.today().date(),
+                        "Descrição": "",
+                        "Tipo": "Entrada",
+                        "Valor": 0.0,
+                    }
+                ]
+            )
+
+        df_dinheiro_ui = st.data_editor(
+            st.session_state[dinheiro_state_key],
+            num_rows="dynamic",
+            hide_index=True,
+            use_container_width=True,
+            column_config={
+                "Data": st.column_config.DateColumn("Data"),
+                "Descrição": st.column_config.TextColumn("Descrição"),
+                "Tipo": st.column_config.SelectboxColumn(
+                    "Tipo", options=["Entrada", "Saída"], required=True
+                ),
+                "Valor": st.column_config.NumberColumn(
+                    "Valor (R$)", step=0.01, min_value=0.0
+                ),
+            },
+            key=f"editor_dinheiro_{nome_periodo}",
+        )
+
+        st.session_state[dinheiro_state_key] = df_dinheiro_ui
+
+        df_din_validos_ui = df_dinheiro_ui.copy()
+        if not df_din_validos_ui.empty and "Valor" in df_din_validos_ui.columns:
+            df_din_validos_ui = df_din_validos_ui[df_din_validos_ui["Valor"] > 0]
+
+        entradas_dinheiro_ui = df_din_validos_ui.loc[
+            df_din_validos_ui["Tipo"] == "Entrada", "Valor"
+        ].sum()
+        saidas_dinheiro_ui = df_din_validos_ui.loc[
+            df_din_validos_ui["Tipo"] == "Saída", "Valor"
+        ].sum()
+
+        col_cd1, col_cd2, col_cd3 = st.columns(3)
+        with col_cd1:
+            st.write("Entradas em dinheiro:", format_currency(entradas_dinheiro_ui))
+        with col_cd2:
+            st.write(
+                "Saídas em dinheiro:",
+                format_currency(-saidas_dinheiro_ui) if saidas_dinheiro_ui else "R$ 0,00",
+            )
+        with col_cd3:
+            st.write(
+                "Saldo do dinheiro:",
+                format_currency(entradas_dinheiro_ui - saidas_dinheiro_ui),
+            )
+
+        st.markdown("---")
+
         # Consolidado
         st.markdown(
             '<div class="tempero-section-title">🏁 Consolidado da loja</div>',
@@ -1025,7 +1142,7 @@ with tab1:
         st.write("Saldo final  :", format_currency(saldo_final))
         st.markdown("</div>", unsafe_allow_html=True)
 
-        # Resumo por categoria (somente visual aqui)
+        # Resumo por categoria
         st.markdown(
             '<div class="tempero-section-title">📌 Resumo por categoria</div>',
             unsafe_allow_html=True,
@@ -1072,7 +1189,6 @@ with tab1:
         st.markdown("</div>", unsafe_allow_html=True)
 
 
-
 # ---------- ABA 2: Conferência & Categorias ----------
 
 with tab2:
@@ -1082,9 +1198,10 @@ with tab2:
     )
 
     if not dados_carregados:
-        st.info("Envie os arquivos do Itaú e PagSeguro na barra lateral para conferir as categorias.")
+        st.info(
+            "Envie os arquivos do Itaú e PagSeguro na barra lateral para conferir as categorias."
+        )
     else:
-        # Gerenciar categorias
         st.markdown('<div class="tempero-card">', unsafe_allow_html=True)
         st.markdown("**Gerenciar categorias**")
 
@@ -1125,12 +1242,11 @@ with tab2:
 
         st.markdown("</div>", unsafe_allow_html=True)
 
-        # Editor de movimentos
         st.markdown('<div class="tempero-card">', unsafe_allow_html=True)
         st.markdown("**Conferência de lançamentos**")
         st.markdown(
             '<div class="tempero-section-sub">Ajuste as categorias linha a linha, se necessário. '
-            'Ao salvar as regras, o sistema aprende para os próximos fechamentos.</div>',
+            "Ao salvar as regras, o sistema aprende para os próximos fechamentos.</div>",
             unsafe_allow_html=True,
         )
 
@@ -1178,7 +1294,6 @@ with tab3:
         unsafe_allow_html=True,
     )
 
-    # Busca arquivos do histórico no Google Drive
     try:
         arquivos = list_history_from_gdrive()
     except Exception as e:
@@ -1188,9 +1303,6 @@ with tab3:
     if not arquivos:
         st.write("Nenhum fechamento salvo ainda.")
     else:
-        # =========================
-        # 1) Comparativo no topo
-        # =========================
         st.markdown("**Comparativo entre períodos (Histórico Analítico)**")
         st.markdown(
             '<div class="tempero-section-sub">Baseado nos relatórios salvos no histórico (Google Drive).</div>',
@@ -1205,11 +1317,9 @@ with tab3:
             try:
                 buf = download_history_file(file_id)
 
-                # 1ª tentativa: aba técnica "ResumoDados"
                 try:
                     df_consol = pd.read_excel(buf, sheet_name="ResumoDados")
                 except Exception:
-                    # fallback: tenta ler "Resumo"
                     buf.seek(0)
                     df_res = pd.read_excel(buf, sheet_name="Resumo")
                     if "Nome do período" not in df_res.columns:
@@ -1247,7 +1357,6 @@ with tab3:
             )
         else:
             df_hist = pd.DataFrame(resumos)
-            # se quiser do mais antigo pro mais recente:
             df_hist = df_hist.iloc[::-1].reset_index(drop=True)
 
             df_display = df_hist.copy()
@@ -1265,9 +1374,6 @@ with tab3:
 
         st.markdown("---")
 
-        # =========================
-        # 2) Lista de arquivos abaixo
-        # =========================
         st.markdown("**Fechamentos salvos**")
         st.markdown('<div class="tempero-card">', unsafe_allow_html=True)
 
@@ -1276,7 +1382,6 @@ with tab3:
             nome = file_info["name"]
             mod_raw = file_info.get("modifiedTime")
 
-            # converte data/hora do Google (RFC3339) para algo amigável
             try:
                 dt = datetime.fromisoformat(mod_raw.replace("Z", "+00:00"))
                 data_mod = dt.strftime("%Y-%m-%d %H:%M")
@@ -1285,12 +1390,10 @@ with tab3:
 
             col_a, col_b, col_c = st.columns([5, 1, 1])
 
-            # Nome + data
             with col_a:
                 st.write(f"📄 **{nome}**")
                 st.caption(f"salvo em {data_mod}")
 
-            # Botão Baixar
             with col_b:
                 try:
                     buf = download_history_file(file_id)
@@ -1308,7 +1411,6 @@ with tab3:
                 except Exception as e:
                     st.error(f"Erro ao baixar {nome}: {e}")
 
-            # Botão Excluir
             with col_c:
                 if st.button("Excluir", key=f"excluir_{file_id}"):
                     try:
