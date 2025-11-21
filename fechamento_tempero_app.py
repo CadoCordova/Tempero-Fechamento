@@ -9,7 +9,7 @@ import json
 import pandas as pd
 import streamlit as st
 
-from google.oauth2 import service_account
+from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload, MediaIoBaseDownload
 
@@ -17,21 +17,30 @@ from openpyxl.styles import Font, Alignment, PatternFill
 from openpyxl.utils import get_column_letter
 
 
-# ---------- Integração com Google Drive (histórico) ----------
+# ---------- Integração com Google Drive (histórico via OAuth) ----------
 
 def get_gdrive_service():
     """
-    Cria o cliente da API do Google Drive usando a service account
-    configurada em st.secrets['gcp_service_account'].
+    Cria o cliente da API do Google Drive usando OAuth (token.json embutido em st.secrets[gdrive_oauth]).
     """
-    sa_info = st.secrets["gcp_service_account"]
-    creds = service_account.Credentials.from_service_account_info(
-        sa_info,
-        scopes=["https://www.googleapis.com/auth/drive"],
+    info = st.secrets["gdrive_oauth"]
+
+    scopes = info.get("scopes", ["https://www.googleapis.com/auth/drive"])
+    # Em TOML, 'scopes' chega como list ou string. Garante que seja list:
+    if isinstance(scopes, str):
+        scopes = [scopes]
+
+    creds = Credentials(
+        token=info["token"],
+        refresh_token=info.get("refresh_token"),
+        token_uri=info["token_uri"],
+        client_id=info["client_id"],
+        client_secret=info["client_secret"],
+        scopes=scopes,
     )
+
     service = build("drive", "v3", credentials=creds)
     return service
-
 
 def get_history_folder_id(service):
     """
