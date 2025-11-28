@@ -72,10 +72,24 @@ def inject_css():
 
         /* Layout da tela de login */
         .login-wrapper {
-            min-height: 80vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
+           /* Em vez de tentar centralizar com flex vertical,
+              usamos um padding-top fixo que funciona melhor no Streamlit */
+           display: flex;
+           justify-content: center;
+           padding-top: 12vh;   /* sobe o card na tela */
+           padding-bottom: 6vh;
+        }
+
+        /* Opcional: garante que o card não “cole” nas laterais em telas menores */
+        .login-card {
+           background-color: #ffffff;
+           padding: 2.5rem 3rem;
+           border-radius: 18px;
+           box-shadow: 0 18px 40px rgba(15, 23, 42, 0.12);
+           max-width: 420px;
+           width: 100%;
+           border: 1px solid rgba(148, 163, 184, 0.25);
+           margin: 0 1rem;  /* novo: respiro lateral em telas pequenas */
         }
 
         .login-card {
