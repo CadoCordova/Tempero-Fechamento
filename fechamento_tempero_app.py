@@ -126,12 +126,14 @@ def inject_css():
             font-size: 0.85rem;
         }}
 
-        /* Logo do login */
-        .login-logo img {{
-            max-width: 140px;      /* menor para caber melhor */
-            display: block;
-            margin: 0 auto 0.4rem auto;
-        }}
+         /* Logo do login — sobrescreve estilo padrão do Streamlit */
+         .login-logo img {
+             width: 120px !important;
+             max-width: 120px !important;
+             height: auto !important;
+             display: block;
+             margin: 0 auto 0.4rem auto;
+         }}
 
         /* Rodapé do login */
         .login-footer {{
