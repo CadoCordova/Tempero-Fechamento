@@ -1317,15 +1317,26 @@ if arquivo_itau and arquivo_pag:
 #  Abas (ordem: Caixa, Fechamento, Categorias, Histórico)
 # ========================
 
-tab1, tab2, tab3, tab4 = st.tabs(
-    [
-        "💵 Caixa Diário",
+# Monta as abas de acordo com o perfil do usuário
+tab_labels = ["💵 Caixa Diário"]
+is_admin = has_role("admin")   # usa a função já existente
+
+if is_admin:
+    tab_labels += [
         "💗 Fechamento Mensal",
         "🧾 Conferência & Categorias",
         "📊 Histórico & Comparativos",
     ]
-)
 
+tabs = st.tabs(tab_labels)
+
+# Sempre existe a aba 1 (Caixa Diário)
+tab1 = tabs[0]
+
+# Só existem as outras abas se for admin
+tab2 = tab3 = tab4 = None
+if is_admin:
+    tab2, tab3, tab4 = tabs[1], tabs[2], tabs[3]
 
 # ---------- ABA 1: Caixa Diário ----------
 
@@ -1437,8 +1448,9 @@ with tab1:
 
 # ---------- ABA 2: Fechamento Mensal ----------
 
-with tab2:
-    require_role("admin")  # só admin (ricardo, lizi)
+if tab2 is not None:
+    with tab2:
+        require_role("admin")  # só admin (ricardo, lizi)
 
     st.markdown(
         '<div class="tempero-section-title">Resumo do período</div>',
@@ -1584,8 +1596,9 @@ with tab2:
 
 # ---------- ABA 3: Conferência & Categorias ----------
 
-with tab3:
-    require_role("admin")  # só admin (ricardo, lizi)
+if tab3 is not None:
+    with tab3:
+        require_role("admin")  # só admin (ricardo, lizi)
 
     st.markdown(
         '<div class="tempero-section-title">🧾 Conferência de lançamentos e categorias</div>',
@@ -1683,8 +1696,9 @@ with tab3:
 
 # ---------- ABA 4: Histórico & Comparativos ----------
 
-with tab4:
-    require_role("admin")  # só admin (ricardo, lizi)
+if tab4 is not None:
+    with tab4:
+        require_role("admin")  # só admin (ricardo, lizi)
     st.markdown(
         '<div class="tempero-section-title">📊 Histórico de fechamentos e comparativo</div>',
         unsafe_allow_html=True,
