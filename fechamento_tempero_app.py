@@ -11,6 +11,10 @@ import streamlit as st
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload, MediaIoBaseDownload
+from google.auth.transport.requests import Request
+from google.auth.exceptions import RefreshError
+from googleapiclient.errors import HttpError
+
 
 from openpyxl.styles import Font, Alignment, PatternFill
 from openpyxl.utils import get_column_letter
@@ -630,7 +634,8 @@ def get_ano_mes(nome_periodo: str):
 
 def get_gdrive_service():
     """
-    Cria o cliente da API do Google Drive usando OAuth (token embutido em st.secrets[gdrive_oauth]).
+    Cria o cliente da API do Google Drive usando OAuth (token em st.secrets["gdrive_oauth"]).
+    Faz refresh explícito do token, e trata erros de autenticação (invalid_grant).
     """
     info = st.secrets["gdrive_oauth"]
 
@@ -639,16 +644,45 @@ def get_gdrive_service():
         scopes = [scopes]
 
     creds = Credentials(
-        token=info["token"],
+        token=info.get("token"),
         refresh_token=info.get("refresh_token"),
-        token_uri=info["token_uri"],
-        client_id=info["client_id"],
-        client_secret=info["client_secret"],
+        token_uri=info.get("token_uri"),
+        client_id=info.get("client_id"),
+        client_secret=info.get("client_secret"),
         scopes=scopes,
     )
 
-    service = build("drive", "v3", credentials=creds)
-    return service
+    try:
+        # Se o token estiver expirado mas o refresh_token ainda for válido,
+        # isso renova o access token em memória.
+        if not creds.valid and creds.refresh_token:
+            creds.refresh(Request())
+
+        service = build("drive", "v3", credentials=creds)
+        return service
+
+    except RefreshError as e:
+        # Aqui entra justamente o cenário do erro que você viu: invalid_grant
+        msg = str(e)
+        if "invalid_grant" in msg:
+            st.error(
+                "Erro de autenticação com o Google Drive: o token foi expirado ou revogado.\n\n"
+                "Para voltar a usar o histórico, gere um novo arquivo token.json "
+                "(rodando o script gerar_token.py) e atualize a seção [gdrive_oauth] "
+                "do secrets do Streamlit."
+            )
+        else:
+            st.error(f"Erro ao renovar o token do Google Drive: {e}")
+        st.stop()
+
+    except HttpError as e:
+        st.error(f"Erro ao acessar a API do Google Drive: {e}")
+        st.stop()
+
+    except Exception as e:
+        # fallback genérico para algo inesperado
+        st.error(f"Erro inesperado ao inicializar o Google Drive: {e}")
+        st.stop()
 
 
 def get_history_folder_id(service):
