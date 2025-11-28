@@ -41,75 +41,96 @@ REGRAS_CATEGORIA = {}
 
 def inject_css():
     st.markdown(
-        f"""
+        """
         <style>
-        .block-container {{
-            max-width: 1200px;
-            padding-top: 3.5rem;
-            padding-bottom: 2.5rem;
-        }}
-        body {{
-            background-color: {BACKGROUND_SOFT};
-        }}
-        .tempero-title {{
-            font-size: 1.8rem;
-            font-weight: 800;
-            color: {PRIMARY_COLOR};
-            margin-bottom: 0.3rem;
+        /* Fundo geral da aplicação */
+        .main {
+            background: radial-gradient(circle at top left, #ffe9f0 0, #ffffff 45%, #f4f7ff 100%);
+        }
+
+        /* Container principal do Streamlit */
+        .block-container {
+            padding-top: 2rem;
+            padding-bottom: 2rem;
+        }
+
+        /* Títulos gerais do app */
+        .tempero-title {
+            font-size: 2rem;
+            font-weight: 700;
             text-align: center;
-        }}
-        .tempero-subtitle {{
+            color: #2b2d42;
+            margin-bottom: 0.25rem;
+        }
+
+        .tempero-subtitle {
             font-size: 0.95rem;
-            color: #666666;
-            margin-bottom: 1.2rem;
             text-align: center;
-        }}
-        .tempero-card {{
-            background-color: #FFFFFF;
-            padding: 1.1rem 1.3rem;
-            border-radius: 0.8rem;
-            box-shadow: 0 2px 6px rgba(0,0,0,0.05);
-            margin-bottom: 0.8rem;
-        }}
-        .tempero-metric-card {{
-            background: linear-gradient(135deg, {PRIMARY_COLOR}, #e04592);
-            color: white !important;
-            padding: 0.9rem 1.1rem;
-            border-radius: 0.8rem;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.18);
-        }}
-        .tempero-metric-label {{
-            font-size: 0.85rem;
-            opacity: 0.9;
-        }}
-        .tempero-metric-value {{
-            font-size: 1.4rem;
+            color: #6c757d;
+            margin-bottom: 2.0rem;
+        }
+
+        /* Layout da tela de login */
+        .login-wrapper {
+            min-height: 80vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .login-card {
+            background-color: #ffffff;
+            padding: 2.5rem 3rem;
+            border-radius: 18px;
+            box-shadow: 0 18px 40px rgba(15, 23, 42, 0.12);
+            max-width: 420px;
+            width: 100%;
+            border: 1px solid rgba(148, 163, 184, 0.25);
+        }
+
+        .login-header {
+            text-align: center;
+            margin-bottom: 1.8rem;
+        }
+
+        .login-logo {
+            font-size: 1.3rem;
             font-weight: 700;
-        }}
-        .tempero-section-title {{
-            font-weight: 700;
-            color: {TEXT_DARK};
-            margin-bottom: 0.4rem;
-        }}
-        .tempero-section-sub {{
+            color: #e07a5f;
+            margin-bottom: 0.25rem;
+        }
+
+        .login-sistema {
             font-size: 0.85rem;
-            color: #777777;
-            margin-bottom: 0.6rem;
-        }}
-        .stTabs [role="tab"] {{
-            padding: 0.6rem 1rem;
+            color: #6b7280;
+        }
+
+        .login-fields label {
+            font-weight: 600 !important;
+            color: #4b5563 !important;
+        }
+
+        .login-footer {
+            margin-top: 1.6rem;
+            font-size: 0.78rem;
+            color: #9ca3af;
+            text-align: center;
+        }
+
+        /* Botão de entrar mais destacado */
+        .stButton>button {
+            width: 100%;
             border-radius: 999px;
-            color: #555 !important;
-        }}
-        .stTabs [role="tab"][aria-selected="true"] {{
-            background-color: {PRIMARY_COLOR}20 !important;
-            color: {PRIMARY_COLOR} !important;
-            border-bottom-color: transparent !important;
-        }}
+            padding: 0.55rem 1.4rem;
+            font-weight: 600;
+            border: none;
+        }
+
         </style>
         """,
         unsafe_allow_html=True,
     )
+
 
 
 # ========================
@@ -223,68 +244,92 @@ def check_auth():
     """
     Autenticação com usuário + senha + perfil.
     - Se auth_ok já estiver na sessão, apenas retorna.
-    - Caso contrário, mostra tela de login e interrompe (st.stop()).
+    - Caso contrário, mostra tela de login em formato de card centralizado.
     """
     if st.session_state.get("auth_ok"):
         return
 
     inject_css()
-    st.markdown(
-        '<div class="tempero-title">Tempero das Gurias - Acesso Restrito</div>',
-        unsafe_allow_html=True,
-    )
-    st.markdown(
-        '<div class="tempero-subtitle">Área interna para fechamento financeiro da loja.</div>',
-        unsafe_allow_html=True,
-    )
 
-    username = st.text_input("Usuário:")
-    senha = st.text_input("Senha:", type="password")
+    # Wrapper centralizado para o card de login
+    st.markdown('<div class="login-wrapper">', unsafe_allow_html=True)
+    with st.container():
+        st.markdown('<div class="login-card">', unsafe_allow_html=True)
 
-    col1, col2 = st.columns(2)
-    with col1:
-        ok = st.button("Entrar")
+        # Cabeçalho do login
+        st.markdown(
+            """
+            <div class="login-header">
+                <div class="login-logo">Tempero das Gurias</div>
+                <div class="login-sistema">Painel de fechamento financeiro</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
-    users = _load_users_from_secrets()
+        # Campos de login
+        users = _load_users_from_secrets()
 
-    if ok:
-        # 1) Se existirem usuários configurados em auth_users, usamos SEMPRE isso
-        if users:
-            user_cfg = users.get(username)
-            if not user_cfg:
-                st.error("Usuário não encontrado ou não configurado.")
-                st.stop()
+        with st.form("login_form"):
+            st.markdown('<div class="login-fields">', unsafe_allow_html=True)
 
-            if senha == user_cfg.get("password"):
-                st.session_state["auth_ok"] = True
-                st.session_state["user"] = username
-                st.session_state["role"] = user_cfg.get("role", "operador")
-                st.rerun()
+            username = st.text_input("Usuário", key="login_username")
+
+            col_senha, col_toggle = st.columns([3, 1])
+            with col_senha:
+                mostrar = st.checkbox("Mostrar senha", value=False)
+            tipo = "text" if mostrar else "password"
+            senha = st.text_input("Senha", type=tipo, key="login_password")
+
+            st.markdown('</div>', unsafe_allow_html=True)
+
+            entrar = st.form_submit_button("Entrar")
+
+        if entrar:
+            # 1) Se existirem usuários configurados em auth_users, usamos SEMPRE isso
+            if users:
+                user_cfg = users.get(username)
+                if not user_cfg:
+                    st.error("Usuário não encontrado ou não configurado.")
+                elif senha == user_cfg.get("password"):
+                    st.session_state["auth_ok"] = True
+                    st.session_state["user"] = username
+                    st.session_state["role"] = user_cfg.get("role", "operador")
+                    st.rerun()
+                else:
+                    st.error("Senha incorreta. Tente novamente.")
+            # 2) Fallback: APP_PASSWORD
             else:
-                st.error("Senha incorreta. Tente novamente.")
-                st.stop()
+                senha_correta = st.secrets.get("APP_PASSWORD")
+                if senha_correta is None:
+                    st.error(
+                        "Nenhum usuário configurado (auth_users) e APP_PASSWORD não definido nos secrets."
+                    )
+                elif senha == senha_correta:
+                    st.session_state["auth_ok"] = True
+                    st.session_state["user"] = username or "admin"
+                    st.session_state["role"] = "admin"
+                    st.rerun()
+                else:
+                    st.error("Senha incorreta. Tente novamente.")
 
-        # 2) Fallback: se não houver auth_users, usa a APP_PASSWORD antiga
-        else:
-            senha_correta = st.secrets.get("APP_PASSWORD")
-            if senha_correta is None:
-                st.error(
-                    "Nenhum usuário configurado (auth_users) e APP_PASSWORD não definido nos secrets."
-                )
-                st.stop()
+        # Rodapé / info
+        st.markdown(
+            """
+            <div class="login-footer">
+                Acesso exclusivo à equipe interna da Tempero das Gurias.<br/>
+                Use seu usuário pessoal. Ações são registradas por usuário.
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
-            if senha == senha_correta:
-                st.session_state["auth_ok"] = True
-                st.session_state["user"] = username or "admin"
-                st.session_state["role"] = "admin"
-                st.rerun()
-            else:
-                st.error("Senha incorreta. Tente novamente.")
-                st.stop()
+        st.markdown('</div>', unsafe_allow_html=True)  # fecha login-card
 
-    # Se ainda não autenticou, interrompe o fluxo
+    st.markdown('</div>', unsafe_allow_html=True)  # fecha login-wrapper
+
+    # Se chegou aqui, ainda não autenticou
     st.stop()
-
 
 # ========================
 #  Funções auxiliares
