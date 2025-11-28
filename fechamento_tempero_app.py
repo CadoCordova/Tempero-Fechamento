@@ -128,8 +128,8 @@ def inject_css():
 
          /* Logo do login — sobrescreve estilo padrão do Streamlit */
          .login-logo img {{
-             width: 120px !important;
-             max-width: 120px !important;
+             width: 100px !important;
+             max-width: 100px !important;
              height: auto !important;
              display: block;
              margin: 0 auto 0.4rem auto;
