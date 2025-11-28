@@ -126,14 +126,14 @@ def inject_css():
             font-size: 0.85rem;
         }}
 
-         /* Logo do login — sobrescreve estilo padrão do Streamlit */
-         .login-logo img {{
+        /* Logo do login — sobrescreve estilo padrão do Streamlit */
+        .login-logo img {{
              width: 100px !important;
              max-width: 100px !important;
              height: auto !important;
              display: block;
              margin: 0 auto 0.4rem auto;
-         }}
+        }}
 
         /* Rodapé do login */
         .login-footer {{
@@ -144,11 +144,18 @@ def inject_css():
         }}
 
         /* =========
-           Card de login (form)
+           Card de login (isolado)
            ========= */
-        [data-testid="stForm"] {{
-            max-width: 480px;              /* largura do card */
-            margin: 0 auto 0 auto;         /* centraliza */
+        .login-card-wrapper {{
+            display: flex;
+            justify-content: center;
+            margin-top: 0.8rem;
+            margin-bottom: 0.2rem;
+        }}
+
+        .login-card {{
+            max-width: 420px;
+            width: 100%;
             padding: 1.3rem 1.6rem 1.4rem 1.6rem;
             background-color: #ffffff;
             border-radius: 14px;
@@ -156,7 +163,7 @@ def inject_css():
             border: 1px solid rgba(148, 163, 184, 0.35);
         }}
 
-        /* Inputs do login um pouco mais compactos */
+        /* Inputs (estilo geral) */
         input[type="text"], input[type="password"] {{
             padding: 0.50rem 0.75rem !important;
             font-size: 0.92rem !important;
@@ -312,8 +319,13 @@ def check_auth():
 
     users = _load_users_from_secrets()
 
+    # === Card de login centralizado ===
+    st.markdown('<div class="login-card-wrapper">', unsafe_allow_html=True)
+    st.markdown('<div class="login-card">', unsafe_allow_html=True)
+
     with st.form("login_form"):
         username = st.text_input("Usuário", key="login_username")
+
         col_senha, col_toggle = st.columns([3, 1])
         with col_senha:
             mostrar = st.checkbox("Mostrar senha", value=False)
@@ -322,6 +334,11 @@ def check_auth():
 
         entrar = st.form_submit_button("Entrar")
 
+    # Fecha divs do card
+    st.markdown("</div>", unsafe_allow_html=True)   # .login-card
+    st.markdown("</div>", unsafe_allow_html=True)   # .login-card-wrapper
+
+    # Validação de credenciais
     if entrar:
         # Se houver seção auth_users, usamos sempre ela
         if users:
