@@ -46,7 +46,7 @@ def inject_css():
         /* Layout geral */
         .block-container {{
             max-width: 1200px;
-            padding-top: 3rem;
+            padding-top: 2.5rem;
             padding-bottom: 2rem;
         }}
         body {{
@@ -59,13 +59,13 @@ def inject_css():
             font-weight: 800;
             color: {PRIMARY_COLOR};
             text-align: center;
-            margin-bottom: 0.25rem;
+            margin-bottom: 0.15rem;
         }}
         .tempero-subtitle {{
             font-size: 0.95rem;
             color: #666666;
             text-align: center;
-            margin-bottom: 1.5rem;
+            margin-bottom: 1.2rem;
         }}
 
         /* Seções */
@@ -126,23 +126,54 @@ def inject_css():
             font-size: 0.85rem;
         }}
 
-        /* Login: logo central, rodapé discreto */
+        /* Logo do login */
         .login-logo img {{
-            max-width: 180px;
+            max-width: 140px;      /* menor para caber melhor */
             display: block;
-            margin: 0 auto 0.6rem auto;
+            margin: 0 auto 0.4rem auto;
         }}
+
+        /* Rodapé do login */
         .login-footer {{
             margin-top: 0.9rem;
             font-size: 0.78rem;
             color: #9ca3af;
             text-align: center;
         }}
+
+        /* =========
+           Card de login (form)
+           ========= */
+        [data-testid="stForm"] {{
+            max-width: 480px;              /* largura do card */
+            margin: 0 auto 0 auto;         /* centraliza */
+            padding: 1.3rem 1.6rem 1.4rem 1.6rem;
+            background-color: #ffffff;
+            border-radius: 14px;
+            box-shadow: 0 10px 30px rgba(15, 23, 42, 0.10);
+            border: 1px solid rgba(148, 163, 184, 0.35);
+        }}
+
+        /* Inputs do login um pouco mais compactos */
+        input[type="text"], input[type="password"] {{
+            padding: 0.50rem 0.75rem !important;
+            font-size: 0.92rem !important;
+        }}
+
+        /* Botão 'Entrar' mais destacado */
+        .stButton>button {{
+            width: 100%;
+            border-radius: 999px;
+            padding: 0.55rem 1.2rem;
+            font-weight: 600;
+            border: none;
+            background-color: {PRIMARY_COLOR} !important;
+            color: #ffffff !important;
+        }}
         </style>
         """,
         unsafe_allow_html=True,
     )
-
 
 # ========================
 #  Formatação Excel
