@@ -67,51 +67,40 @@ def inject_css():
             font-size: 0.95rem;
             text-align: center;
             color: #6c757d;
-            margin-bottom: 2.0rem;
+            margin-bottom: 1.2rem;
         }
 
         /* Layout da tela de login */
         .login-wrapper {
-           /* Em vez de tentar centralizar com flex vertical,
-              usamos um padding-top fixo que funciona melhor no Streamlit */
+           /* Usamos padding fixo para posicionar melhor no Streamlit */
            display: flex;
            justify-content: center;
-           padding-top: 12vh;   /* sobe o card na tela */
+           padding-top: 8vh;
            padding-bottom: 6vh;
         }
 
-        /* Opcional: garante que o card não “cole” nas laterais em telas menores */
+        /* Card de login */
         .login-card {
            background-color: #ffffff;
-           padding: 2.5rem 3rem;
-           border-radius: 18px;
+           padding: 2.3rem 2.6rem;
+           border-radius: 16px;
            box-shadow: 0 18px 40px rgba(15, 23, 42, 0.12);
            max-width: 420px;
            width: 100%;
-           border: 1px solid rgba(148, 163, 184, 0.25);
-           margin: 0 1rem;  /* novo: respiro lateral em telas pequenas */
-        }
-
-        .login-card {
-            background-color: #ffffff;
-            padding: 2.5rem 3rem;
-            border-radius: 18px;
-            box-shadow: 0 18px 40px rgba(15, 23, 42, 0.12);
-            max-width: 420px;
-            width: 100%;
-            border: 1px solid rgba(148, 163, 184, 0.25);
+           border: 1px solid rgba(0,0,0,0.05);
+           margin: 0 1rem;
         }
 
         .login-header {
             text-align: center;
-            margin-bottom: 1.8rem;
+            margin-bottom: 1.0rem;
         }
 
-        .login-logo {
-            font-size: 1.3rem;
+        .login-logo-text {
+            font-size: 1.2rem;
             font-weight: 700;
-            color: #e07a5f;
-            margin-bottom: 0.25rem;
+            color: #F06BAA;
+            margin-bottom: 0.15rem;
         }
 
         .login-sistema {
@@ -125,7 +114,7 @@ def inject_css():
         }
 
         .login-footer {
-            margin-top: 1.6rem;
+            margin-top: 1.4rem;
             font-size: 0.78rem;
             color: #9ca3af;
             text-align: center;
@@ -140,12 +129,23 @@ def inject_css():
             border: none;
         }
 
+        /* Inputs um pouco mais compactos */
+        input[type="text"], input[type="password"] {
+            padding: 0.45rem 0.75rem !important;
+            font-size: 0.92rem !important;
+        }
+
+        /* Centraliza imagens (logo) dentro do card */
+        .login-card .stImage img {
+            max-width: 140px;
+            display: block;
+            margin: 0 auto 0.4rem auto;
+        }
+
         </style>
         """,
         unsafe_allow_html=True,
     )
-
-
 
 # ========================
 #  Formatação Excel
@@ -265,16 +265,20 @@ def check_auth():
 
     inject_css()
 
-    # Wrapper centralizado para o card de login
+        # Wrapper centralizado para o card de login
     st.markdown('<div class="login-wrapper">', unsafe_allow_html=True)
     with st.container():
         st.markdown('<div class="login-card">', unsafe_allow_html=True)
 
-        # Cabeçalho do login
+        # Cabeçalho do login com logo
+        logo_path = Path("logo_tempero.png")
+        if logo_path.exists():
+            st.image(str(logo_path))
+
         st.markdown(
             """
             <div class="login-header">
-                <div class="login-logo">Tempero das Gurias</div>
+                <div class="login-logo-text">Tempero das Gurias</div>
                 <div class="login-sistema">Painel de fechamento financeiro</div>
             </div>
             """,
