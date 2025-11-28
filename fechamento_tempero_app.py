@@ -161,10 +161,70 @@ def formatar_tabela_excel(ws, df, start_row=1):
 
 
 # ========================
-#  Autenticação simples
+#  Autenticação com usuários e perfis
 # ========================
 
+def _load_users_from_secrets():
+    """
+    Lê usuários e perfis de st.secrets["auth_users"].
+
+    Estrutura esperada no secrets:
+
+    [auth_users.ricardo]
+    password = "..."
+    role = "admin"
+    """
+    try:
+        users_section = st.secrets["auth_users"]
+    except Exception:
+        users_section = {}
+
+    users = {}
+    for username, cfg in users_section.items():
+        # cfg é um objeto tipo Secrets; acessamos como dict
+        role_raw = cfg.get("role", "operador")
+        users[username] = {
+            "password": cfg.get("password"),
+            # Normalizamos o papel em minúsculas
+            "role": str(role_raw).strip().lower(),
+        }
+    return users
+
+
+def current_user():
+    return st.session_state.get("user")
+
+
+def current_role():
+    return st.session_state.get("role", "operador")
+
+
+def has_role(*roles):
+    """
+    Retorna True se o papel do usuário atual estiver em roles.
+    Exemplo: has_role("admin", "financeiro")
+    """
+    role = current_role()
+    # Normaliza roles recebidos para minúsculas
+    roles_norm = [str(r).strip().lower() for r in roles]
+    return role in roles_norm
+
+
+def require_role(*roles):
+    """
+    Interrompe a execução da aba se o usuário não tiver um dos perfis exigidos.
+    """
+    if not has_role(*roles):
+        st.warning("Você não tem permissão para acessar esta área.")
+        st.stop()
+
+
 def check_auth():
+    """
+    Autenticação com usuário + senha + perfil.
+    - Se auth_ok já estiver na sessão, apenas retorna.
+    - Caso contrário, mostra tela de login e interrompe (st.stop()).
+    """
     if st.session_state.get("auth_ok"):
         return
 
@@ -178,20 +238,51 @@ def check_auth():
         unsafe_allow_html=True,
     )
 
-    senha = st.text_input("Digite a senha para acessar o sistema:", type="password")
-    ok = st.button("Entrar")
+    username = st.text_input("Usuário:")
+    senha = st.text_input("Senha:", type="password")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        ok = st.button("Entrar")
+
+    users = _load_users_from_secrets()
 
     if ok:
-        senha_correta = st.secrets.get("APP_PASSWORD")
+        # 1) Se existirem usuários configurados em auth_users, usamos SEMPRE isso
+        if users:
+            user_cfg = users.get(username)
+            if not user_cfg:
+                st.error("Usuário não encontrado ou não configurado.")
+                st.stop()
 
-        if senha_correta is None:
-            st.error("Senha não configurada no Streamlit Secrets (APP_PASSWORD).")
-        elif senha == senha_correta:
-            st.session_state["auth_ok"] = True
-            st.rerun()
+            if senha == user_cfg.get("password"):
+                st.session_state["auth_ok"] = True
+                st.session_state["user"] = username
+                st.session_state["role"] = user_cfg.get("role", "operador")
+                st.rerun()
+            else:
+                st.error("Senha incorreta. Tente novamente.")
+                st.stop()
+
+        # 2) Fallback: se não houver auth_users, usa a APP_PASSWORD antiga
         else:
-            st.error("Senha incorreta. Tente novamente.")
+            senha_correta = st.secrets.get("APP_PASSWORD")
+            if senha_correta is None:
+                st.error(
+                    "Nenhum usuário configurado (auth_users) e APP_PASSWORD não definido nos secrets."
+                )
+                st.stop()
 
+            if senha == senha_correta:
+                st.session_state["auth_ok"] = True
+                st.session_state["user"] = username or "admin"
+                st.session_state["role"] = "admin"
+                st.rerun()
+            else:
+                st.error("Senha incorreta. Tente novamente.")
+                st.stop()
+
+    # Se ainda não autenticou, interrompe o fluxo
     st.stop()
 
 
@@ -935,6 +1026,16 @@ st.sidebar.markdown(
     "Feito para a **Tempero das Gurias** 💕\n\n"
 )
 
+# Informações do usuário logado + botão de sair
+if st.session_state.get("auth_ok"):
+    st.sidebar.markdown("---")
+    st.sidebar.markdown(f"**Usuário:** {current_user()}  ")
+    st.sidebar.markdown(f"**Perfil:** {current_role()}")
+    if st.sidebar.button("Sair"):
+        for k in ["auth_ok", "user", "role"]:
+            st.session_state.pop(k, None)
+        st.rerun()
+
 # ========================
 #  Carrega livro-caixa global de dinheiro
 # ========================
@@ -1337,6 +1438,8 @@ with tab1:
 # ---------- ABA 2: Fechamento Mensal ----------
 
 with tab2:
+    require_role("admin")  # só admin (ricardo, lizi)
+
     st.markdown(
         '<div class="tempero-section-title">Resumo do período</div>',
         unsafe_allow_html=True,
@@ -1482,6 +1585,8 @@ with tab2:
 # ---------- ABA 3: Conferência & Categorias ----------
 
 with tab3:
+    require_role("admin")  # só admin (ricardo, lizi)
+
     st.markdown(
         '<div class="tempero-section-title">🧾 Conferência de lançamentos e categorias</div>',
         unsafe_allow_html=True,
@@ -1579,6 +1684,7 @@ with tab3:
 # ---------- ABA 4: Histórico & Comparativos ----------
 
 with tab4:
+    require_role("admin")  # só admin (ricardo, lizi)
     st.markdown(
         '<div class="tempero-section-title">📊 Histórico de fechamentos e comparativo</div>',
         unsafe_allow_html=True,
