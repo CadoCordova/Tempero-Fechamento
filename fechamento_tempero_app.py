@@ -274,54 +274,51 @@ def check_auth():
         unsafe_allow_html=True,
     )
 
-        # Campos de login
-        users = _load_users_from_secrets()
+    # Campos de login
+    users = _load_users_from_secrets()
 
-        with st.form("login_form"):
-            st.markdown('<div class="login-fields">', unsafe_allow_html=True)
+    with st.form("login_form"):
+        username = st.text_input("Usuário", key="login_username")
 
-            username = st.text_input("Usuário", key="login_username")
+        col_senha, col_toggle = st.columns([3, 1])
+        with col_senha:
+            mostrar = st.checkbox("Mostrar senha", value=False)
+        tipo = "text" if mostrar else "password"
+        senha = st.text_input("Senha", type=tipo, key="login_password")
 
-            col_senha, col_toggle = st.columns([3, 1])
-            with col_senha:
-                mostrar = st.checkbox("Mostrar senha", value=False)
-            tipo = "text" if mostrar else "password"
-            senha = st.text_input("Senha", type=tipo, key="login_password")
+        entrar = st.form_submit_button("Entrar")
 
-            st.markdown('</div>', unsafe_allow_html=True)
-
-            entrar = st.form_submit_button("Entrar")
-
-        if entrar:
-            # 1) Se existirem usuários configurados em auth_users, usamos SEMPRE isso
-            if users:
-                user_cfg = users.get(username)
-                if not user_cfg:
-                    st.error("Usuário não encontrado ou não configurado.")
-                elif senha == user_cfg.get("password"):
-                    st.session_state["auth_ok"] = True
-                    st.session_state["user"] = username
-                    st.session_state["role"] = user_cfg.get("role", "operador")
-                    st.rerun()
-                else:
-                    st.error("Senha incorreta. Tente novamente.")
-            # 2) Fallback: APP_PASSWORD
+    # Validação de credenciais
+    if entrar:
+        # 1) Se existirem usuários configurados em auth_users, usamos SEMPRE isso
+        if users:
+            user_cfg = users.get(username)
+            if not user_cfg:
+                st.error("Usuário não encontrado ou não configurado.")
+            elif senha == user_cfg.get("password"):
+                st.session_state["auth_ok"] = True
+                st.session_state["user"] = username
+                st.session_state["role"] = user_cfg.get("role", "operador")
+                st.rerun()
             else:
-                senha_correta = st.secrets.get("APP_PASSWORD")
-                if senha_correta is None:
-                    st.error(
-                        "Nenhum usuário configurado (auth_users) e APP_PASSWORD não definido nos secrets."
-                    )
-                elif senha == senha_correta:
-                    st.session_state["auth_ok"] = True
-                    st.session_state["user"] = username or "admin"
-                    st.session_state["role"] = "admin"
-                    st.rerun()
-                else:
-                    st.error("Senha incorreta. Tente novamente.")
+                st.error("Senha incorreta. Tente novamente.")
+        # 2) Fallback: APP_PASSWORD
+        else:
+            senha_correta = st.secrets.get("APP_PASSWORD")
+            if senha_correta is None:
+                st.error(
+                    "Nenhum usuário configurado (auth_users) e APP_PASSWORD não definido nos secrets."
+                )
+            elif senha == senha_correta:
+                st.session_state["auth_ok"] = True
+                st.session_state["user"] = username or "admin"
+                st.session_state["role"] = "admin"
+                st.rerun()
+            else:
+                st.error("Senha incorreta. Tente novamente.")
 
-        # Rodapé / info
-        st.markdown(
+    # Rodapé / info
+    st.markdown(
         """
         <div class="login-footer">
             Acesso exclusivo à equipe interna.<br/>
@@ -336,6 +333,7 @@ def check_auth():
 
     # Se chegou aqui, ainda não autenticou
     st.stop()
+
 
 # ========================
 #  Funções auxiliares
