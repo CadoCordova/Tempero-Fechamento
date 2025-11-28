@@ -43,103 +43,92 @@ def inject_css():
     st.markdown(
         """
         <style>
-        /* Fundo geral da aplicação */
+
+        /* === Layout Geral === */
+
         .main {
             background: radial-gradient(circle at top left, #ffe9f0 0, #ffffff 45%, #f4f7ff 100%);
         }
 
-        /* Container principal do Streamlit */
         .block-container {
-            padding-top: 2rem;
-            padding-bottom: 2rem;
+            padding-top: 0 !important;
         }
 
-        /* Títulos gerais do app */
-        .tempero-title {
-            font-size: 2rem;
-            font-weight: 700;
-            text-align: center;
-            color: #2b2d42;
-            margin-bottom: 0.25rem;
+        /* === Estrutura da tela de login === */
+
+        .login-page {
+            width: 100%;
+            display: flex;
+            justify-content: center;
+            padding-top: 6vh;       /* controla a altura do card */
+            padding-bottom: 4vh;
         }
 
-        .tempero-subtitle {
-            font-size: 0.95rem;
-            text-align: center;
-            color: #6c757d;
-            margin-bottom: 1.2rem;
-        }
-
-        /* Layout da tela de login */
-        .login-wrapper {
-           /* Usamos padding fixo para posicionar melhor no Streamlit */
-           display: flex;
-           justify-content: center;
-           padding-top: 8vh;
-           padding-bottom: 6vh;
-        }
-
-        /* Card de login */
         .login-card {
-           background-color: #ffffff;
-           padding: 2.3rem 2.6rem;
-           border-radius: 16px;
-           box-shadow: 0 18px 40px rgba(15, 23, 42, 0.12);
-           max-width: 420px;
-           width: 100%;
-           border: 1px solid rgba(0,0,0,0.05);
-           margin: 0 1rem;
-        }
-
-        .login-header {
+            background-color: #ffffff;
+            padding: 2.4rem 2.8rem 2rem 2.8rem;
+            border-radius: 18px;
+            box-shadow: 0 18px 40px rgba(15, 23, 42, 0.12);
+            max-width: 420px;
+            width: 100%;
+            border: 1px solid rgba(0, 0, 0, 0.06);
             text-align: center;
-            margin-bottom: 1.0rem;
         }
 
-        .login-logo-text {
-            font-size: 1.2rem;
+        /* === Logo === */
+
+        .login-logo img {
+            width: 150px !important;     /* tamanho fixo e suave */
+            height: auto !important;
+            margin-bottom: 0.5rem;
+            margin-top: 0.5rem;
+        }
+
+        /* === Títulos === */
+
+        .login-title {
+            font-size: 1.35rem;
             font-weight: 700;
             color: #F06BAA;
             margin-bottom: 0.15rem;
         }
 
-        .login-sistema {
-            font-size: 0.85rem;
+        .login-subtitle {
+            font-size: 0.90rem;
             color: #6b7280;
+            margin-bottom: 1.4rem;
         }
 
-        .login-fields label {
+        /* === Inputs === */
+
+        input[type="text"], input[type="password"] {
+            padding: 0.50rem 0.75rem !important;
+            font-size: 0.92rem !important;
+        }
+
+        label {
             font-weight: 600 !important;
             color: #4b5563 !important;
         }
 
+        /* === Botão === */
+
+        .stButton>button {
+            width: 100%;
+            border-radius: 999px;
+            padding: 0.55rem 1.2rem;
+            font-weight: 600;
+            border: none;
+            background-color: #F06BAA !important;
+            color: white !important;
+        }
+
+        /* Mensagem footer */
         .login-footer {
             margin-top: 1.4rem;
             font-size: 0.78rem;
             color: #9ca3af;
             text-align: center;
-        }
-
-        /* Botão de entrar mais destacado */
-        .stButton>button {
-            width: 100%;
-            border-radius: 999px;
-            padding: 0.55rem 1.4rem;
-            font-weight: 600;
-            border: none;
-        }
-
-        /* Inputs um pouco mais compactos */
-        input[type="text"], input[type="password"] {
-            padding: 0.45rem 0.75rem !important;
-            font-size: 0.92rem !important;
-        }
-
-        /* Centraliza imagens (logo) dentro do card */
-        .login-card .stImage img {
-            max-width: 140px;
-            display: block;
-            margin: 0 auto 0.4rem auto;
         }
 
         </style>
@@ -265,25 +254,25 @@ def check_auth():
 
     inject_css()
 
-        # Wrapper centralizado para o card de login
-    st.markdown('<div class="login-wrapper">', unsafe_allow_html=True)
-    with st.container():
-        st.markdown('<div class="login-card">', unsafe_allow_html=True)
+    # ====== Novo layout de login ======
+    st.markdown('<div class="login-page">', unsafe_allow_html=True)
+    st.markdown('<div class="login-card">', unsafe_allow_html=True)
 
-        # Cabeçalho do login com logo
-        logo_path = Path("logo_tempero.png")
-        if logo_path.exists():
-            st.image(str(logo_path))
+    # Logo
+    logo_path = Path("logo_tempero.png")
+    if logo_path.exists():
+        st.markdown('<div class="login-logo">', unsafe_allow_html=True)
+        st.image(str(logo_path))
+        st.markdown('</div>', unsafe_allow_html=True)
 
-        st.markdown(
-            """
-            <div class="login-header">
-                <div class="login-logo-text">Tempero das Gurias</div>
-                <div class="login-sistema">Painel de fechamento financeiro</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+    # Títulos
+    st.markdown(
+        """
+        <div class="login-title">Tempero das Gurias</div>
+        <div class="login-subtitle">Painel de fechamento financeiro</div>
+        """,
+        unsafe_allow_html=True,
+    )
 
         # Campos de login
         users = _load_users_from_secrets()
@@ -333,18 +322,17 @@ def check_auth():
 
         # Rodapé / info
         st.markdown(
-            """
-            <div class="login-footer">
-                Acesso exclusivo à equipe interna da Tempero das Gurias.<br/>
-                Use seu usuário pessoal. Ações são registradas por usuário.
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+        """
+        <div class="login-footer">
+            Acesso exclusivo à equipe interna.<br/>
+            Ações registradas por usuário.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
-        st.markdown('</div>', unsafe_allow_html=True)  # fecha login-card
-
-    st.markdown('</div>', unsafe_allow_html=True)  # fecha login-wrapper
+    st.markdown('</div>', unsafe_allow_html=True)  # fecha login-card
+    st.markdown('</div>', unsafe_allow_html=True)  # fecha login-page
 
     # Se chegou aqui, ainda não autenticou
     st.stop()
