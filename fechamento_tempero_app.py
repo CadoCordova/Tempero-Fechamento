@@ -1030,7 +1030,7 @@ st.sidebar.markdown(
 if st.session_state.get("auth_ok"):
     st.sidebar.markdown("---")
     st.sidebar.markdown(f"**Usuário:** {current_user()}  ")
-    st.sidebar.markdown(f"**Perfil:** {current_role()}")
+#    st.sidebar.markdown(f"**Perfil:** {current_role()}")
     if st.sidebar.button("Sair"):
         for k in ["auth_ok", "user", "role"]:
             st.session_state.pop(k, None)
