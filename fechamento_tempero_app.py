@@ -1400,31 +1400,13 @@ with tab1:
         salvar_caixa = st.button("Salvar lançamentos de dinheiro")
 
 
-if salvar_caixa:
-    try:
-        df_to_save = df_din_limpo.reset_index(drop=True).copy()
-
-        # Atualiza cache do mês e salva no Drive (arquivo mensal)
-        st.session_state["df_dinheiro_periodo"] = df_to_save
-        st.session_state["cash_period_ref"] = ano_mes_ref
-
-        save_cash_to_gdrive(ano_mes_ref, df_to_save)
-        st.success(f"Caixa de {ano_mes_ref} salvo com sucesso no Google Drive!")
-        st.rerun()
-    except Exception as e:
-        st.error(f"Erro ao salvar caixa diário no Drive: {e}")
-
-    # Totais do mês (caixa) apenas para exibição na aba
+    # Totais do mês (caixa) — exibição sempre visível
     df_din_calc = df_din_limpo.copy()
     if not df_din_calc.empty and "Valor" in df_din_calc.columns:
-        df_din_calc = df_din_calc[df_din_calc["Valor"] > 0]
+        df_din_calc = df_din_calc[df_din_calc["Valor"].fillna(0) > 0]
 
-    entradas_d = df_din_calc.loc[
-        df_din_calc["Tipo"] == "Entrada", "Valor"
-    ].sum()
-    saidas_d = df_din_calc.loc[
-        df_din_calc["Tipo"] == "Saída", "Valor"
-    ].sum()
+    entradas_d = df_din_calc.loc[df_din_calc["Tipo"] == "Entrada", "Valor"].sum()
+    saidas_d = df_din_calc.loc[df_din_calc["Tipo"] == "Saída", "Valor"].sum()
     saldo_d = entradas_d - saidas_d
 
     st.markdown("---")
@@ -1438,6 +1420,21 @@ if salvar_caixa:
         )
     with col_c3:
         st.write("Saldo do dinheiro no período:", format_currency(saldo_d))
+
+
+    if salvar_caixa:
+        try:
+            df_to_save = df_din_limpo.reset_index(drop=True).copy()
+
+            # Atualiza cache do mês e salva no Drive (arquivo mensal)
+            st.session_state["df_dinheiro_periodo"] = df_to_save
+            st.session_state["cash_period_ref"] = ano_mes_ref
+
+            save_cash_to_gdrive(ano_mes_ref, df_to_save)
+            st.success(f"Caixa de {ano_mes_ref} salvo com sucesso no Google Drive!")
+            st.rerun()
+        except Exception as e:
+            st.error(f"Erro ao salvar caixa diário no Drive: {e}")
 
 
 # ---------- ABA 2: Fechamento Mensal ----------
