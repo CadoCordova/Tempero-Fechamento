@@ -1426,6 +1426,7 @@ dados_carregados = False
 mensagem_erro = None
 
 entradas_totais = saidas_totais = resultado_consolidado = 0.0
+saldo_inicial = 0.0
 saldo_final = 0.0
 ent_itau = sai_itau = res_itau = 0.0
 ent_pag = sai_pag = res_pag = 0.0
