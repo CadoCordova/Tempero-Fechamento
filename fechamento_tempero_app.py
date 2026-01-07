@@ -328,6 +328,51 @@ def normalizar_texto(txt):
     return s
 
 
+def normalize_df_cat_export(df: pd.DataFrame) -> pd.DataFrame:
+    """Normaliza o dataframe de categorias para evitar KeyError ao reabrir meses antigos.
+    Garante colunas: Categoria, Entradas, Saídas (com acentuação).
+    """
+    if df is None:
+        df = pd.DataFrame()
+
+    df = df.copy()
+
+    # Caso vazio: retorna estrutura padrão
+    if df.empty:
+        return pd.DataFrame(columns=["Categoria", "Entradas", "Saídas"])
+
+    # Limpa nomes de colunas e remove colunas técnicas (ex.: Unnamed: 0)
+    df.columns = [str(c).strip() for c in df.columns]
+    df = df.loc[:, [c for c in df.columns if not str(c).startswith("Unnamed")]].copy()
+
+    # Renomeia colunas comuns/variantes (sem acento, singular, etc.)
+    rename_map = {}
+    for c in df.columns:
+        cl = str(c).strip().lower()
+        if cl in ("categoria", "categorias"):
+            rename_map[c] = "Categoria"
+        elif cl in ("entrada", "entradas", "total entradas"):
+            rename_map[c] = "Entradas"
+        elif cl in ("saida", "saidas", "saídas", "total saidas", "total saídas"):
+            rename_map[c] = "Saídas"
+
+    if rename_map:
+        df = df.rename(columns=rename_map)
+
+    # Garante presença das colunas esperadas
+    if "Categoria" not in df.columns:
+        df["Categoria"] = ""
+    if "Entradas" not in df.columns:
+        df["Entradas"] = 0.0
+    if "Saídas" not in df.columns:
+        df["Saídas"] = 0.0
+
+    df = df[["Categoria", "Entradas", "Saídas"]].copy()
+    df["Entradas"] = pd.to_numeric(df["Entradas"], errors="coerce").fillna(0.0)
+    df["Saídas"] = pd.to_numeric(df["Saídas"], errors="coerce").fillna(0.0)
+    return df
+
+
 def extrair_descricao_linha(linha: dict):
     if "descricao" in linha and linha["descricao"] not in (None, ""):
         return linha["descricao"]
@@ -1570,6 +1615,7 @@ if has_role("admin") and not dados_carregados:
 
         df_mov = dfs_hist.get("movimentos", pd.DataFrame())
         df_cat_export = dfs_hist.get("categorias", pd.DataFrame())
+        df_cat_export = normalize_df_cat_export(df_cat_export)
 
         # tenta carregar resumo (para título e números)
         df_consolidado = dfs_hist.get("resumo_dados", pd.DataFrame())
@@ -1847,10 +1893,12 @@ if tab2 is not None:
                 '<div class="tempero-section-sub">Baseado nas categorias atuais (já considera regras salvas anteriormente).</div>',
                 unsafe_allow_html=True,
             )
-            df_cat_display = df_cat_export.copy()
+            df_cat_display = normalize_df_cat_export(df_cat_export).copy()
             if not df_cat_display.empty:
-                df_cat_display["Entradas"] = df_cat_display["Entradas"].map(format_currency)
-                df_cat_display["Saídas"] = df_cat_display["Saídas"].map(format_currency)
+                if "Entradas" in df_cat_display.columns:
+                    df_cat_display["Entradas"] = df_cat_display["Entradas"].map(format_currency)
+                if "Saídas" in df_cat_display.columns:
+                    df_cat_display["Saídas"] = df_cat_display["Saídas"].map(format_currency)
             st.dataframe(df_cat_display, use_container_width=True)
 
             # Relatório
