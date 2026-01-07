@@ -1700,12 +1700,14 @@ if has_role("admin") and not dados_carregados:
         excel_buffer = excel_hist
         dados_carregados = True
 
-        df_mov = dfs_hist.get("movimentos", pd.DataFrame())
-        df_cat_export = dfs_hist.get("categorias", pd.DataFrame())
+        # OBS: o loader retorna chaves: movs, resumo, cat, dinheiro
+        df_mov = dfs_hist.get("movs", pd.DataFrame())
+
+        df_cat_export = dfs_hist.get("cat", pd.DataFrame())
         df_cat_export = normalize_df_cat_export(df_cat_export)
 
         # tenta carregar resumo (para título e números)
-        df_consolidado = dfs_hist.get("resumo_dados", pd.DataFrame())
+        df_consolidado = dfs_hist.get("resumo", pd.DataFrame())
         if df_consolidado is not None and not df_consolidado.empty:
             linha = df_consolidado.iloc[0]
             # mantém nome_periodo apenas para exibição
