@@ -1027,28 +1027,63 @@ def save_monthly_fechamento_to_gdrive(periodo_ref: str, buffer: BytesIO):
         service.files().create(body=file_metadata, media_body=media, fields="id").execute()
 
 
+
 def load_monthly_fechamento_from_gdrive(periodo_ref: str):
-    """Carrega o fechamento mensal fixo do mês (se existir) e retorna BytesIO + dataframes.
+    """Carrega o fechamento do mês para reabrir nas abas (sem precisar reenviar extratos).
+
+    Prioridade de busca:
+      1) Arquivo mensal fixo: fechamento_tempero_YYYY-MM.xlsx
+      2) Fallback (histórico): último arquivo do Drive cujo nome contenha YYYY-MM e comece com "fechamento_tempero_"
 
     Retorno:
-      (excel_buf, dfs) onde dfs é dict com chaves: resumo_dados, movimentos, categorias, dinheiro
+      (excel_buf, dfs) onde
+        excel_buf: BytesIO do Excel
+        dfs: dict com dataframes das abas principais (se existirem)
     """
     service = get_gdrive_service()
     folder_id = get_history_folder_id(service)
 
-    filename = get_monthly_fechamento_file_name(periodo_ref)
-    file_id = get_file_id_by_name(service, folder_id, filename)
+    filename_fix = get_monthly_fechamento_file_name(periodo_ref)
+    file_id = get_file_id_by_name(service, folder_id, filename_fix)
+
+    # Fallback: procura no histórico o fechamento mais recente daquele mês
+    if not file_id:
+        try:
+            arquivos = list_history_from_gdrive()
+        except Exception:
+            arquivos = []
+
+        candidatos = []
+        for f in arquivos:
+            nome = f.get("name", "") or ""
+            if not nome.lower().endswith(".xlsx"):
+                continue
+            if not nome.startswith("fechamento_tempero_"):
+                continue
+            if periodo_ref not in nome:
+                continue
+            candidatos.append(f)
+
+        if candidatos:
+            # Ordena por modifiedTime desc (ou createdTime desc como fallback)
+            def _key(x):
+                return x.get("modifiedTime") or x.get("createdTime") or ""
+            candidatos = sorted(candidatos, key=_key, reverse=True)
+            file_id = candidatos[0].get("id")
+
     if not file_id:
         return None, {}
 
-    excel_buf = download_history_file(file_id)
+    request = service.files().get_media(fileId=file_id)
+    excel_buf = BytesIO()
+    downloader = MediaIoBaseDownload(excel_buf, request)
+    done = False
+    while not done:
+        _, done = downloader.next_chunk()
+    excel_buf.seek(0)
 
+    # Tenta ler as planilhas mais comuns do fechamento
     dfs = {}
-    try:
-        dfs["resumo_dados"] = pd.read_excel(excel_buf, sheet_name="ResumoDados")
-    except Exception:
-        excel_buf.seek(0)
-        dfs["resumo_dados"] = pd.DataFrame()
 
     try:
         excel_buf.seek(0)
@@ -1056,6 +1091,24 @@ def load_monthly_fechamento_from_gdrive(periodo_ref: str):
     except Exception:
         excel_buf.seek(0)
         dfs["movimentos"] = pd.DataFrame()
+
+    try:
+        excel_buf.seek(0)
+        dfs["resumo_dados"] = pd.read_excel(excel_buf, sheet_name="Resumo")
+    except Exception:
+        excel_buf.seek(0)
+        dfs["resumo_dados"] = pd.DataFrame()
+
+    # Algumas versões antigas podem ter nomes diferentes — tenta alternativas
+    if dfs["movimentos"].empty:
+        for alt in ["Consolidado", "Lançamentos", "Lancamentos"]:
+            try:
+                excel_buf.seek(0)
+                dfs["movimentos"] = pd.read_excel(excel_buf, sheet_name=alt)
+                if not dfs["movimentos"].empty:
+                    break
+            except Exception:
+                excel_buf.seek(0)
 
     try:
         excel_buf.seek(0)
