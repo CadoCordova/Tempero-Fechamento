@@ -1175,42 +1175,117 @@ def load_monthly_fechamento_from_gdrive(periodo_ref: str):
         _, done = downloader.next_chunk()
     excel_buf.seek(0)
 
-    def _read_first_sheet(excel_bytes: BytesIO, candidates: list[str]) -> pd.DataFrame:
-        """Tenta ler a primeira planilha existente dentre 'candidates'."""
+    def _norm_text(s: str) -> str:
+        s = str(s or "")
+        s = s.strip().lower()
+        s = "".join(ch for ch in unicodedata.normalize("NFKD", s) if not unicodedata.combining(ch))
+        s = re.sub(r"\s+", " ", s)
+        return s
+
+    def _read_sheet_by_name_candidates(excel_bytes: BytesIO, candidates: list[str]) -> pd.DataFrame:
+        """Tenta ler uma planilha por nome (case/acentos-insensitive)"""
         try:
             excel_bytes.seek(0)
             xf = pd.ExcelFile(excel_bytes)
-            sheets = set(xf.sheet_names)
+            sheet_map = {_norm_text(n): n for n in xf.sheet_names}
         except Exception:
             return pd.DataFrame()
 
-        for s in candidates:
-            if s in sheets:
+        for cand in candidates:
+            key = _norm_text(cand)
+            real = sheet_map.get(key)
+            if real:
                 try:
                     excel_bytes.seek(0)
-                    return pd.read_excel(excel_bytes, sheet_name=s)
+                    return pd.read_excel(excel_bytes, sheet_name=real)
                 except Exception:
                     continue
         return pd.DataFrame()
 
-    # Mapeia versões antigas/novas de nomes de planilha
+    def _best_sheet_by_columns(excel_bytes: BytesIO, expected_cols: list[str], min_score: int = 2) -> pd.DataFrame:
+        """Fallback: varre sheets e escolhe a que melhor casa com as colunas esperadas."""
+        try:
+            excel_bytes.seek(0)
+            xf = pd.ExcelFile(excel_bytes)
+        except Exception:
+            return pd.DataFrame()
+
+        expected_norm = {_norm_text(c) for c in expected_cols}
+        best_score = -1
+        best_sheet = None
+
+        for sh in xf.sheet_names:
+            try:
+                excel_bytes.seek(0)
+                # lê só o header (rápido)
+                df_head = pd.read_excel(excel_bytes, sheet_name=sh, nrows=1)
+                cols_norm = {_norm_text(c) for c in df_head.columns}
+                score = len(expected_norm.intersection(cols_norm))
+                if score > best_score:
+                    best_score = score
+                    best_sheet = sh
+            except Exception:
+                continue
+
+        if best_sheet and best_score >= min_score:
+            try:
+                excel_bytes.seek(0)
+                return pd.read_excel(excel_bytes, sheet_name=best_sheet)
+            except Exception:
+                return pd.DataFrame()
+
+        return pd.DataFrame()
+
+    # Primeiro tenta por nome; se não achar, tenta por colunas (fallback robusto para históricos antigos)
+    df_movs = _read_sheet_by_name_candidates(
+        excel_buf,
+        ["Movimentos", "Movimentacoes", "Movimentações", "Lancamentos", "Lançamentos", "Transacoes", "Transações"]
+    )
+    if df_movs.empty:
+        df_movs = _best_sheet_by_columns(
+            excel_buf,
+            expected_cols=["Data", "Descrição", "Tipo", "Valor", "Categoria", "Entradas", "Saídas"],
+            min_score=2
+        )
+
+    df_resumo = _read_sheet_by_name_candidates(
+        excel_buf,
+        ["Resumo", "ResumoDados", "Consolidado", "Resumo do período", "Resumo do periodo", "ResumoPeriodo"]
+    )
+    if df_resumo.empty:
+        df_resumo = _best_sheet_by_columns(
+            excel_buf,
+            expected_cols=["Entradas", "Saídas", "Saldo", "Resultado"],
+            min_score=1
+        )
+
+    df_cat = _read_sheet_by_name_candidates(
+        excel_buf,
+        ["Categorias", "ResumoPorCategoria", "Resumo por categoria", "CategoriasExport", "Categorias_Export"]
+    )
+    if df_cat.empty:
+        df_cat = _best_sheet_by_columns(
+            excel_buf,
+            expected_cols=["Categoria", "Entradas", "Saídas"],
+            min_score=2
+        )
+
+    df_dinheiro = _read_sheet_by_name_candidates(
+        excel_buf,
+        ["Dinheiro", "CaixaDinheiro", "Caixa", "Caixa diário", "Caixa Diario", "CaixaDiario"]
+    )
+    if df_dinheiro.empty:
+        df_dinheiro = _best_sheet_by_columns(
+            excel_buf,
+            expected_cols=["Data", "Descrição", "Tipo", "Valor"],
+            min_score=2
+        )
+
     dfs = {
-        "movimentos": _read_first_sheet(
-            excel_buf,
-            ["Movimentos", "Movimentacoes", "Movimentações", "Lancamentos", "Lançamentos", "Base", "Dados"]
-        ),
-        "resumo_dados": _read_first_sheet(
-            excel_buf,
-            ["Resumo", "ResumoDados", "Resumo_dados", "Consolidado", "Resumo do período"]
-        ),
-        "categorias": _read_first_sheet(
-            excel_buf,
-            ["Categorias", "ResumoPorCategoria", "Resumo por categoria", "CategoriasExport", "Categorias_Export"]
-        ),
-        "dinheiro": _read_first_sheet(
-            excel_buf,
-            ["Dinheiro", "CaixaDinheiro", "Caixa", "Caixa diário", "Caixa Diario"]
-        ),
+        "movs": df_movs,
+        "resumo": df_resumo,
+        "cat": df_cat,
+        "dinheiro": df_dinheiro,
     }
 
     # Higienizações leves (evita colunas Unnamed e normaliza nomes)
