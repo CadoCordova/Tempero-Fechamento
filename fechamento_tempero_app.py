@@ -1122,12 +1122,16 @@ def load_monthly_fechamento_from_gdrive(periodo_ref: str):
 
     Prioridade de busca:
       1) Arquivo mensal fixo: fechamento_tempero_YYYY-MM.xlsx
-      2) Fallback (histórico): último arquivo do Drive cujo nome contenha YYYY-MM e comece com "fechamento_tempero_"
+      2) Fallback (histórico): último arquivo do Drive cujo nome contenha o mês e comece com "fechamento_tempero_"
 
     Retorno:
       (excel_buf, dfs) onde
         excel_buf: BytesIO do Excel
         dfs: dict com dataframes das abas principais (se existirem)
+            - movimentos
+            - resumo_dados
+            - categorias
+            - dinheiro
     """
     service = get_gdrive_service()
     folder_id = get_history_folder_id(service)
@@ -1135,7 +1139,7 @@ def load_monthly_fechamento_from_gdrive(periodo_ref: str):
     filename_fix = get_monthly_fechamento_file_name(periodo_ref)
     file_id = get_file_id_by_name(service, folder_id, filename_fix)
 
-    # Fallback: procura no histórico o fechamento mais recente daquele mês
+    # Fallback: pega o mais recente do histórico do mesmo mês (inclui nomes com "dezembro_2025" e/ou timestamp)
     if not file_id:
         try:
             arquivos = list_history_from_gdrive()
@@ -1149,13 +1153,12 @@ def load_monthly_fechamento_from_gdrive(periodo_ref: str):
                 continue
             if not nome.startswith("fechamento_tempero_"):
                 continue
-            periodo = extract_periodo_ref_from_filename(nome)
-            if periodo != periodo_ref:
+            peri = extract_periodo_ref_from_filename(nome)
+            if peri != periodo_ref:
                 continue
             candidatos.append(f)
 
         if candidatos:
-            # Ordena por modifiedTime desc (ou createdTime desc como fallback)
             def _key(x):
                 return x.get("modifiedTime") or x.get("createdTime") or ""
             candidatos = sorted(candidatos, key=_key, reverse=True)
@@ -1172,50 +1175,58 @@ def load_monthly_fechamento_from_gdrive(periodo_ref: str):
         _, done = downloader.next_chunk()
     excel_buf.seek(0)
 
-    # Tenta ler as planilhas mais comuns do fechamento
-    dfs = {}
+    def _read_first_sheet(excel_bytes: BytesIO, candidates: list[str]) -> pd.DataFrame:
+        """Tenta ler a primeira planilha existente dentre 'candidates'."""
+        try:
+            excel_bytes.seek(0)
+            xf = pd.ExcelFile(excel_bytes)
+            sheets = set(xf.sheet_names)
+        except Exception:
+            return pd.DataFrame()
 
-    try:
-        excel_buf.seek(0)
-        dfs["movimentos"] = pd.read_excel(excel_buf, sheet_name="Movimentos")
-    except Exception:
-        excel_buf.seek(0)
-        dfs["movimentos"] = pd.DataFrame()
+        for s in candidates:
+            if s in sheets:
+                try:
+                    excel_bytes.seek(0)
+                    return pd.read_excel(excel_bytes, sheet_name=s)
+                except Exception:
+                    continue
+        return pd.DataFrame()
 
-    try:
-        excel_buf.seek(0)
-        dfs["resumo_dados"] = pd.read_excel(excel_buf, sheet_name="Resumo")
-    except Exception:
-        excel_buf.seek(0)
-        dfs["resumo_dados"] = pd.DataFrame()
+    # Mapeia versões antigas/novas de nomes de planilha
+    dfs = {
+        "movimentos": _read_first_sheet(
+            excel_buf,
+            ["Movimentos", "Movimentacoes", "Movimentações", "Lancamentos", "Lançamentos", "Base", "Dados"]
+        ),
+        "resumo_dados": _read_first_sheet(
+            excel_buf,
+            ["Resumo", "ResumoDados", "Resumo_dados", "Consolidado", "Resumo do período"]
+        ),
+        "categorias": _read_first_sheet(
+            excel_buf,
+            ["Categorias", "ResumoPorCategoria", "Resumo por categoria", "CategoriasExport", "Categorias_Export"]
+        ),
+        "dinheiro": _read_first_sheet(
+            excel_buf,
+            ["Dinheiro", "CaixaDinheiro", "Caixa", "Caixa diário", "Caixa Diario"]
+        ),
+    }
 
-    # Algumas versões antigas podem ter nomes diferentes — tenta alternativas
-    if dfs["movimentos"].empty:
-        for alt in ["Consolidado", "Lançamentos", "Lancamentos"]:
-            try:
-                excel_buf.seek(0)
-                dfs["movimentos"] = pd.read_excel(excel_buf, sheet_name=alt)
-                if not dfs["movimentos"].empty:
-                    break
-            except Exception:
-                excel_buf.seek(0)
-
-    try:
-        excel_buf.seek(0)
-        dfs["categorias"] = pd.read_excel(excel_buf, sheet_name="Categorias")
-    except Exception:
-        excel_buf.seek(0)
-        dfs["categorias"] = pd.DataFrame()
-
-    try:
-        excel_buf.seek(0)
-        dfs["dinheiro"] = pd.read_excel(excel_buf, sheet_name="Dinheiro")
-    except Exception:
-        excel_buf.seek(0)
-        dfs["dinheiro"] = pd.DataFrame()
+    # Higienizações leves (evita colunas Unnamed e normaliza nomes)
+    for k, df in list(dfs.items()):
+        if df is None or not isinstance(df, pd.DataFrame) or df.empty:
+            dfs[k] = pd.DataFrame()
+            continue
+        # remove "Unnamed"
+        df = df.loc[:, [c for c in df.columns if not str(c).startswith("Unnamed")]].copy()
+        df.columns = [str(c).strip() for c in df.columns]
+        dfs[k] = df
 
     excel_buf.seek(0)
     return excel_buf, dfs
+
+
 
 
 def list_available_months_from_gdrive() -> list[str]:
