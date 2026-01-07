@@ -5,6 +5,7 @@ from io import BytesIO
 from datetime import datetime
 import json
 import re
+import unicodedata
 
 import pandas as pd
 import streamlit as st
@@ -721,6 +722,49 @@ def get_ano_mes(nome_periodo: str):
 
 
 # ========================
+#  Util: extrair mês (YYYY-MM) de nomes de arquivos do Drive
+# ========================
+def _normalize_str(s: str) -> str:
+    return ''.join(
+        c for c in unicodedata.normalize('NFD', (s or '').lower())
+        if unicodedata.category(c) != 'Mn'
+    )
+
+def extract_periodo_ref_from_filename(filename: str) -> str | None:
+    """Extrai YYYY-MM de padrões comuns de nomes de arquivos.
+
+    Suporta:
+      - ...2025-12... (padrão direto)
+      - ..._20251231_... (timestamp YYYYMMDD)
+      - ...dezembro_2025... (mês por extenso pt-BR)
+    """
+    if not filename:
+        return None
+
+    m = re.search(r"(20\d{2}-\d{2})", filename)
+    if m:
+        return m.group(1)
+
+    # Timestamp com data (YYYYMMDD) dentro do nome
+    m = re.search(r"(20\d{2})(0[1-9]|1[0-2])([0-3]\d)", filename)
+    if m:
+        return f"{m.group(1)}-{m.group(2)}"
+
+    # Mês por extenso (sem acento)
+    month_map = {
+        'janeiro': '01', 'fevereiro': '02', 'marco': '03', 'abril': '04', 'maio': '05',
+        'junho': '06', 'julho': '07', 'agosto': '08', 'setembro': '09', 'outubro': '10',
+        'novembro': '11', 'dezembro': '12',
+    }
+    n = _normalize_str(filename)
+    m = re.search(r"(janeiro|fevereiro|marco|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)[_\-\s]*(20\d{2})", n)
+    if m:
+        return f"{m.group(2)}-{month_map[m.group(1)]}"
+
+    return None
+
+
+# ========================
 #  Google Drive (OAuth)
 # ========================
 
@@ -1060,7 +1104,8 @@ def load_monthly_fechamento_from_gdrive(periodo_ref: str):
                 continue
             if not nome.startswith("fechamento_tempero_"):
                 continue
-            if periodo_ref not in nome:
+            periodo = extract_periodo_ref_from_filename(nome)
+            if periodo != periodo_ref:
                 continue
             candidatos.append(f)
 
@@ -1138,9 +1183,9 @@ def list_available_months_from_gdrive() -> list[str]:
     meses = set()
     for f in arquivos:
         nome = f.get("name", "")
-        m = re.findall(r"(20\d{2}-\d{2})", nome)
-        for mm in m:
-            meses.add(mm)
+        periodo = extract_periodo_ref_from_filename(nome)
+        if periodo:
+            meses.add(periodo)
 
     # também inclui o mês atual
     meses.add(datetime.today().strftime("%Y-%m"))
