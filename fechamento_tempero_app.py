@@ -4,6 +4,7 @@ from pathlib import Path
 from io import BytesIO
 from datetime import datetime
 import json
+import re
 
 import pandas as pd
 import streamlit as st
@@ -979,6 +980,120 @@ def save_cash_to_gdrive(periodo_ref: str, df: pd.DataFrame):
         ).execute()
 
 
+
+# ========================
+#  Fechamento mensal (arquivo mensal fixo no Drive)
+# ========================
+
+def get_monthly_fechamento_file_name(periodo_ref: str) -> str:
+    """Nome fixo do fechamento mensal no Drive (para reabrir depois).
+
+    Ex.: fechamento_tempero_2025-12.xlsx
+    """
+    return f"fechamento_tempero_{periodo_ref}.xlsx"
+
+
+def get_file_id_by_name(service, folder_id: str, filename: str):
+    """Procura um arquivo pelo nome dentro da pasta de históricos."""
+    query = f"'{folder_id}' in parents and name = '{filename}' and trashed = false"
+    results = (
+        service.files()
+        .list(q=query, spaces="drive", fields="files(id, name)", pageSize=10)
+        .execute()
+    )
+    files = results.get("files", [])
+    return files[0]["id"] if files else None
+
+
+def save_monthly_fechamento_to_gdrive(periodo_ref: str, buffer: BytesIO):
+    """Salva (ou atualiza) o fechamento mensal fixo do mês no Drive."""
+    service = get_gdrive_service()
+    folder_id = get_history_folder_id(service)
+
+    filename = get_monthly_fechamento_file_name(periodo_ref)
+    file_id = get_file_id_by_name(service, folder_id, filename)
+
+    buffer.seek(0)
+    media = MediaIoBaseUpload(
+        buffer,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        resumable=False,
+    )
+
+    if file_id:
+        service.files().update(fileId=file_id, media_body=media).execute()
+    else:
+        file_metadata = {"name": filename, "parents": [folder_id]}
+        service.files().create(body=file_metadata, media_body=media, fields="id").execute()
+
+
+def load_monthly_fechamento_from_gdrive(periodo_ref: str):
+    """Carrega o fechamento mensal fixo do mês (se existir) e retorna BytesIO + dataframes.
+
+    Retorno:
+      (excel_buf, dfs) onde dfs é dict com chaves: resumo_dados, movimentos, categorias, dinheiro
+    """
+    service = get_gdrive_service()
+    folder_id = get_history_folder_id(service)
+
+    filename = get_monthly_fechamento_file_name(periodo_ref)
+    file_id = get_file_id_by_name(service, folder_id, filename)
+    if not file_id:
+        return None, {}
+
+    excel_buf = download_history_file(file_id)
+
+    dfs = {}
+    try:
+        dfs["resumo_dados"] = pd.read_excel(excel_buf, sheet_name="ResumoDados")
+    except Exception:
+        excel_buf.seek(0)
+        dfs["resumo_dados"] = pd.DataFrame()
+
+    try:
+        excel_buf.seek(0)
+        dfs["movimentos"] = pd.read_excel(excel_buf, sheet_name="Movimentos")
+    except Exception:
+        excel_buf.seek(0)
+        dfs["movimentos"] = pd.DataFrame()
+
+    try:
+        excel_buf.seek(0)
+        dfs["categorias"] = pd.read_excel(excel_buf, sheet_name="Categorias")
+    except Exception:
+        excel_buf.seek(0)
+        dfs["categorias"] = pd.DataFrame()
+
+    try:
+        excel_buf.seek(0)
+        dfs["dinheiro"] = pd.read_excel(excel_buf, sheet_name="Dinheiro")
+    except Exception:
+        excel_buf.seek(0)
+        dfs["dinheiro"] = pd.DataFrame()
+
+    excel_buf.seek(0)
+    return excel_buf, dfs
+
+
+def list_available_months_from_gdrive() -> list[str]:
+    """Lista meses (YYYY-MM) encontrados nos arquivos do Drive (histórico)."""
+    try:
+        arquivos = list_history_from_gdrive()
+    except Exception:
+        return []
+
+    meses = set()
+    for f in arquivos:
+        nome = f.get("name", "")
+        m = re.findall(r"(20\d{2}-\d{2})", nome)
+        for mm in m:
+            meses.add(mm)
+
+    # também inclui o mês atual
+    meses.add(datetime.today().strftime("%Y-%m"))
+    return sorted(meses)
+
+
 # ========================
 #  Config Streamlit
 # ========================
@@ -1017,6 +1132,26 @@ nome_periodo = st.sidebar.text_input(
     help='Ex.: "2025-11 1ª quinzena", "2025-10 mês cheio"',
 )
 
+
+# Seleção do mês de trabalho/consulta (vale para Caixa e também para reabrir fechamentos)
+mes_atual = datetime.today().strftime("%Y-%m")
+mes_inferido = get_ano_mes(nome_periodo) or mes_atual
+
+# Para admin, tenta listar meses existentes no Drive; para operador, mantém lista simples
+if has_role("admin"):
+    meses_disponiveis = list_available_months_from_gdrive()
+    if mes_inferido not in meses_disponiveis:
+        meses_disponiveis = sorted(set(meses_disponiveis + [mes_inferido]))
+else:
+    meses_disponiveis = sorted({mes_atual, mes_inferido})
+
+mes_selecionado = st.sidebar.selectbox(
+    "Mês para visualizar/editar (YYYY-MM)",
+    options=meses_disponiveis,
+    index=meses_disponiveis.index(mes_inferido) if mes_inferido in meses_disponiveis else 0,
+    help="Este mês controla qual caixa em dinheiro e qual fechamento mensal serão carregados nas abas.",
+)
+
 st.sidebar.markdown("---")
 st.sidebar.markdown(
     "Feito para a **Tempero das Gurias** 💕\n\n"
@@ -1036,7 +1171,7 @@ if st.session_state.get("auth_ok"):
 #  Carrega livro-caixa mensal de dinheiro (por mês cheio)
 # ========================
 
-ano_mes_ref = get_ano_mes(nome_periodo) or datetime.today().strftime("%Y-%m")
+ano_mes_ref = mes_selecionado
 
 # Mantém em cache por mês para evitar leituras repetidas no Drive
 if (
@@ -1309,6 +1444,52 @@ if arquivo_itau and arquivo_pag:
             mensagem_erro = str(e)
 
 
+
+# ========================
+#  Reabrir fechamento mensal do Drive (quando não houver upload no período)
+# ========================
+
+if has_role("admin") and not dados_carregados:
+    cache_key = f"fechamento_cache_{ano_mes_ref}"
+    if st.session_state.get("fechamento_cache_ref") != ano_mes_ref:
+        st.session_state["fechamento_cache_ref"] = ano_mes_ref
+        st.session_state.pop("fechamento_cache_data", None)
+
+    if st.session_state.get("fechamento_cache_data") is None:
+        try:
+            excel_hist, dfs_hist = load_monthly_fechamento_from_gdrive(ano_mes_ref)
+            if excel_hist is not None:
+                st.session_state["fechamento_cache_data"] = (excel_hist, dfs_hist)
+        except Exception:
+            st.session_state["fechamento_cache_data"] = None
+
+    cached = st.session_state.get("fechamento_cache_data")
+    if cached:
+        excel_hist, dfs_hist = cached
+        # Preenche variáveis principais para as abas (visualização/edição)
+        excel_buffer = excel_hist
+        dados_carregados = True
+
+        df_mov = dfs_hist.get("movimentos", pd.DataFrame())
+        df_cat_export = dfs_hist.get("categorias", pd.DataFrame())
+
+        # tenta carregar resumo (para título e números)
+        df_consolidado = dfs_hist.get("resumo_dados", pd.DataFrame())
+        if df_consolidado is not None and not df_consolidado.empty:
+            linha = df_consolidado.iloc[0]
+            # mantém nome_periodo apenas para exibição
+            try:
+                nome_periodo = str(linha.get("Nome do período", nome_periodo))
+            except Exception:
+                pass
+            entradas_totais = float(linha.get("Entradas totais", linha.get("Entradas totais", 0.0)) or 0.0)
+            saidas_totais = float(linha.get("Saídas totais", linha.get("Saídas totais", 0.0)) or 0.0)
+            resultado_consolidado = float(linha.get("Resultado do período", linha.get("Resultado do período", 0.0)) or 0.0)
+            saldo_inicial = float(linha.get("Saldo inicial", 0.0) or 0.0)
+            saldo_final = float(linha.get("Saldo final", 0.0) or 0.0)
+
+
+
 # ========================
 #  Abas (ordem: Caixa, Fechamento, Categorias, Histórico)
 # ========================
@@ -1366,6 +1547,22 @@ with tab1:
     # Garante índice limpo (evita aparecer contagem antiga do Excel)
     df_dinheiro_periodo = df_dinheiro_periodo.reset_index(drop=True)
 
+    col_add1, col_add2 = st.columns([1, 4])
+    with col_add1:
+        if st.button("Adicionar lançamento"):
+            novo = pd.DataFrame(
+                [{
+                    "Data": datetime.today().date(),
+                    "Descrição": "",
+                    "Tipo": "Entrada",
+                    "Valor": 0.0,
+                }],
+                columns=["Data", "Descrição", "Tipo", "Valor"],
+            )
+            df_novo = pd.concat([df_dinheiro_periodo, novo], ignore_index=True)
+            st.session_state["df_dinheiro_periodo"] = df_novo
+            st.rerun()
+
     df_dinheiro_ui = st.data_editor(
         df_dinheiro_periodo,
         num_rows="dynamic",
@@ -1400,41 +1597,46 @@ with tab1:
         salvar_caixa = st.button("Salvar lançamentos de dinheiro")
 
 
-    # Totais do mês (caixa) — exibição sempre visível
-    df_din_calc = df_din_limpo.copy()
-    if not df_din_calc.empty and "Valor" in df_din_calc.columns:
-        df_din_calc = df_din_calc[df_din_calc["Valor"].fillna(0) > 0]
+if salvar_caixa:
+    try:
+        df_to_save = df_din_limpo.reset_index(drop=True).copy()
 
-    entradas_d = df_din_calc.loc[df_din_calc["Tipo"] == "Entrada", "Valor"].sum()
-    saidas_d = df_din_calc.loc[df_din_calc["Tipo"] == "Saída", "Valor"].sum()
-    saldo_d = entradas_d - saidas_d
+        # Atualiza cache do mês e salva no Drive (arquivo mensal)
+        st.session_state["df_dinheiro_periodo"] = df_to_save
+        st.session_state["cash_period_ref"] = ano_mes_ref
 
-    st.markdown("---")
-    col_c1, col_c2, col_c3 = st.columns(3)
-    with col_c1:
-        st.write("Entradas em dinheiro no período:", format_currency(entradas_d))
-    with col_c2:
-        st.write(
-            "Saídas em dinheiro no período:",
-            format_currency(-saidas_d) if saidas_d else "R$ 0,00",
-        )
-    with col_c3:
-        st.write("Saldo do dinheiro no período:", format_currency(saldo_d))
+        save_cash_to_gdrive(ano_mes_ref, df_to_save)
+        st.success(f"Caixa de {ano_mes_ref} salvo com sucesso no Google Drive!")
+        st.rerun()
+    except Exception as e:
+        st.error(f"Erro ao salvar caixa diário no Drive: {e}")
+
+# Totais do mês (caixa) apenas para exibição na aba
+df_din_calc = df_din_limpo.copy()
+if not df_din_calc.empty and "Valor" in df_din_calc.columns:
+    df_din_calc = df_din_calc[df_din_calc["Valor"] > 0]
+
+entradas_d = df_din_calc.loc[
+    df_din_calc["Tipo"] == "Entrada", "Valor"
+].sum()
+saidas_d = df_din_calc.loc[
+    df_din_calc["Tipo"] == "Saída", "Valor"
+].sum()
+saldo_d = entradas_d - saidas_d
+
+st.markdown("---")
+col_c1, col_c2, col_c3 = st.columns(3)
+with col_c1:
+    st.write("Entradas em dinheiro no período:", format_currency(entradas_d))
+with col_c2:
+    st.write(
+        "Saídas em dinheiro no período:",
+        format_currency(-saidas_d) if saidas_d else "R$ 0,00",
+    )
+with col_c3:
+    st.write("Saldo do dinheiro no período:", format_currency(saldo_d))
 
 
-    if salvar_caixa:
-        try:
-            df_to_save = df_din_limpo.reset_index(drop=True).copy()
-
-            # Atualiza cache do mês e salva no Drive (arquivo mensal)
-            st.session_state["df_dinheiro_periodo"] = df_to_save
-            st.session_state["cash_period_ref"] = ano_mes_ref
-
-            save_cash_to_gdrive(ano_mes_ref, df_to_save)
-            st.success(f"Caixa de {ano_mes_ref} salvo com sucesso no Google Drive!")
-            st.rerun()
-        except Exception as e:
-            st.error(f"Erro ao salvar caixa diário no Drive: {e}")
 
 
 # ---------- ABA 2: Fechamento Mensal ----------
@@ -1577,6 +1779,8 @@ if tab2 is not None:
                 filename = f"fechamento_tempero_{slug}_{timestamp}.xlsx"
                 try:
                     upload_history_to_gdrive(excel_buffer, filename)
+                    # também mantém um arquivo mensal fixo para reabrir/editar depois
+                    save_monthly_fechamento_to_gdrive(ano_mes_ref, excel_buffer)
                     st.success(
                         f"Relatório salvo no histórico (Google Drive) como: {filename}"
                     )
@@ -1680,7 +1884,88 @@ if tab3 is not None:
                     f"{alteracoes} regra(s) de categorização salva(s). "
                     "Os próximos fechamentos já virão com essas categorias aplicadas."
                 )
+
                 st.rerun()
+
+            st.markdown("---")
+            st.markdown(
+                '<div class="tempero-section-sub">Opcional: se você estiver reabrindo um mês antigo, '
+                "você pode salvar o fechamento atualizado diretamente no Drive (arquivo mensal fixo).</div>",
+                unsafe_allow_html=True,
+            )
+
+            if st.button("Salvar fechamento atualizado no Drive (mês selecionado)"):
+                try:
+                    # Recalcula o resumo por categoria a partir do dataframe editado
+                    df_base = edited_df.copy()
+                    for col in ["Valor"]:
+                        if col in df_base.columns:
+                            df_base[col] = pd.to_numeric(df_base[col], errors="coerce").fillna(0.0)
+
+                    df_ent = (
+                        df_base[df_base.get("Tipo") == "Entrada"]
+                        .groupby("Categoria")["Valor"]
+                        .sum()
+                        .rename("Entradas")
+                    )
+                    df_sai = (
+                        df_base[df_base.get("Tipo") == "Saída"]
+                        .groupby("Categoria")["Valor"]
+                        .sum()
+                        .rename("Saídas")
+                    )
+                    df_cat_new = (
+                        pd.concat([df_ent, df_sai], axis=1)
+                        .fillna(0.0)
+                        .reset_index()
+                        .rename(columns={"index": "Categoria"})
+                    )
+
+                    # Lê todas as abas existentes e regrava substituindo Movimentos/Categorias
+                    if excel_buffer is None:
+                        raise RuntimeError("Não há um fechamento carregado para salvar.")
+
+                    excel_buffer.seek(0)
+                    dfs_all = pd.read_excel(excel_buffer, sheet_name=None)
+
+                    dfs_all["Movimentos"] = df_base
+                    dfs_all["Categorias"] = df_cat_new
+
+                    out = BytesIO()
+                    with pd.ExcelWriter(out, engine="openpyxl") as writer:
+                        # mantém ordem básica, se possível
+                        prefer_order = [
+                            "ResumoDados",
+                            "Resumo",
+                            "Categorias",
+                            "Movimentos",
+                            "Dinheiro",
+                        ]
+                        written = set()
+                        for sh in prefer_order:
+                            if sh in dfs_all:
+                                dfs_all[sh].to_excel(writer, sheet_name=sh, index=False)
+                                written.add(sh)
+                        for sh, dfsh in dfs_all.items():
+                            if sh in written:
+                                continue
+                            dfsh.to_excel(writer, sheet_name=sh, index=False)
+                    out.seek(0)
+
+                    save_monthly_fechamento_to_gdrive(ano_mes_ref, out)
+                    st.success(
+                        f"Fechamento de {ano_mes_ref} atualizado no Drive com as categorias ajustadas."
+                    )
+                    # atualiza cache local para as outras abas
+                    st.session_state["fechamento_cache_data"] = (out, {
+                        "resumo_dados": dfs_all.get("ResumoDados", pd.DataFrame()),
+                        "movimentos": df_base,
+                        "categorias": df_cat_new,
+                        "dinheiro": dfs_all.get("Dinheiro", pd.DataFrame()),
+                    })
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Erro ao salvar fechamento no Drive: {e}")
 
             st.markdown("</div>", unsafe_allow_html=True)
 
