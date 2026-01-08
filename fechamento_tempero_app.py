@@ -1202,13 +1202,88 @@ def load_monthly_fechamento_from_gdrive(periodo_ref: str):
                     continue
         return pd.DataFrame()
 
+    def _read_sheet_with_header_guess(excel_bytes: BytesIO, sheet_name: str, expected_cols: list[str]) -> pd.DataFrame:
+        """Lê uma aba tentando descobrir automaticamente em qual linha está o cabeçalho.
+
+        Útil para arquivos históricos onde a 1ª linha tem título, e o header real vem algumas linhas abaixo.
+        """
+        expected_norm = {_norm_text(c) for c in expected_cols}
+        try:
+            excel_bytes.seek(0)
+            preview = pd.read_excel(excel_bytes, sheet_name=sheet_name, header=None, nrows=30)
+        except Exception:
+            return pd.DataFrame()
+
+        best_row = 0
+        best_score = -1
+        for i in range(min(30, len(preview))):
+            row_vals = preview.iloc[i].tolist()
+            row_norm = {_norm_text(v) for v in row_vals if str(v).strip() not in ["", "nan", "None"]}
+            score = len(expected_norm.intersection(row_norm))
+            if score > best_score:
+                best_score = score
+                best_row = i
+
+        try:
+            excel_bytes.seek(0)
+            df = pd.read_excel(excel_bytes, sheet_name=sheet_name, header=best_row)
+        except Exception:
+            return pd.DataFrame()
+
+        # remove colunas Unnamed e normaliza nomes
+        df = df.loc[:, [c for c in df.columns if not str(c).startswith("Unnamed")]].copy()
+        df.columns = [str(c).strip() for c in df.columns]
+        return df
+
     def _best_sheet_by_columns(excel_bytes: BytesIO, expected_cols: list[str], min_score: int = 2) -> pd.DataFrame:
-        """Fallback: varre sheets e escolhe a que melhor casa com as colunas esperadas."""
+        """Fallback: varre sheets e escolhe a que melhor casa com as colunas esperadas.
+
+        Agora com detecção automática de header (não assume que a linha 0 é o cabeçalho).
+        """
         try:
             excel_bytes.seek(0)
             xf = pd.ExcelFile(excel_bytes)
         except Exception:
             return pd.DataFrame()
+
+        expected_norm = {_norm_text(c) for c in expected_cols}
+        best_score = -1
+        best_sheet = None
+        best_header_row = 0
+
+        for sh in xf.sheet_names:
+            try:
+                excel_bytes.seek(0)
+                preview = pd.read_excel(excel_bytes, sheet_name=sh, header=None, nrows=20)
+                # acha a melhor linha candidata a header dentro da aba
+                local_best = -1
+                local_row = 0
+                for i in range(min(20, len(preview))):
+                    row_vals = preview.iloc[i].tolist()
+                    row_norm = {_norm_text(v) for v in row_vals if str(v).strip() not in ["", "nan", "None"]}
+                    score = len(expected_norm.intersection(row_norm))
+                    if score > local_best:
+                        local_best = score
+                        local_row = i
+                if local_best > best_score:
+                    best_score = local_best
+                    best_sheet = sh
+                    best_header_row = local_row
+            except Exception:
+                continue
+
+        if best_sheet and best_score >= min_score:
+            try:
+                excel_bytes.seek(0)
+                df = pd.read_excel(excel_bytes, sheet_name=best_sheet, header=best_header_row)
+                df = df.loc[:, [c for c in df.columns if not str(c).startswith("Unnamed")]].copy()
+                df.columns = [str(c).strip() for c in df.columns]
+                return df
+            except Exception:
+                # tenta mais uma vez com heurística completa
+                return _read_sheet_with_header_guess(excel_bytes, best_sheet, expected_cols)
+
+        return pd.DataFrame()
 
         expected_norm = {_norm_text(c) for c in expected_cols}
         best_score = -1
@@ -1721,6 +1796,25 @@ if has_role("admin") and not dados_carregados:
             saldo_inicial = float(linha.get("Saldo inicial", 0.0) or 0.0)
             saldo_final = float(linha.get("Saldo final", 0.0) or 0.0)
 
+        # Diagnóstico (apenas admin): se vier vazio, mostra detalhes na própria tela
+        if has_role("admin"):
+            try:
+                if (df_mov.empty and df_cat_export.empty and (df_consolidado is None or df_consolidado.empty)):
+                    st.warning("Fechamento do Drive foi encontrado, mas não consegui identificar as abas/colunas do Excel deste mês. Abra o diagnóstico abaixo e me envie um print (abas + colunas) que eu ajusto o parser.")
+                    with st.expander("Diagnóstico do arquivo de fechamento (admin)", expanded=False):
+                        try:
+                            excel_hist.seek(0)
+                            xf_dbg = pd.ExcelFile(excel_hist)
+                            st.write("Abas encontradas no Excel:", xf_dbg.sheet_names)
+                        except Exception as e:
+                            st.write("Não consegui ler as abas do Excel:", str(e))
+                        st.write("Colunas detectadas em movs:", list(df_mov.columns) if not df_mov.empty else "(vazio)")
+                        st.write("Colunas detectadas em cat:", list(df_cat_export.columns) if not df_cat_export.empty else "(vazio)")
+                        st.write("Colunas detectadas em resumo:", list(df_consolidado.columns) if (df_consolidado is not None and not df_consolidado.empty) else "(vazio)")
+            except Exception:
+                pass
+
+
 
 
 # ========================
@@ -1795,6 +1889,23 @@ with tab1:
             df_novo = pd.concat([df_dinheiro_periodo, novo], ignore_index=True)
             st.session_state["df_dinheiro_periodo"] = df_novo
             st.rerun()
+
+    # --- Sanitização de tipos (evita ArrowTypeError no st.data_editor / pyarrow)
+    df_dinheiro_periodo = df_dinheiro_periodo.copy()
+    # garante colunas padrão
+    for _col in ["Data", "Descrição", "Tipo", "Valor"]:
+        if _col not in df_dinheiro_periodo.columns:
+            df_dinheiro_periodo[_col] = None
+    # Data: datetime64[ns]
+    df_dinheiro_periodo["Data"] = pd.to_datetime(df_dinheiro_periodo["Data"], errors="coerce")
+    # Texto
+    df_dinheiro_periodo["Descrição"] = df_dinheiro_periodo["Descrição"].fillna("").astype(str)
+    df_dinheiro_periodo["Tipo"] = df_dinheiro_periodo["Tipo"].fillna("Entrada").astype(str)
+    df_dinheiro_periodo.loc[~df_dinheiro_periodo["Tipo"].isin(["Entrada", "Saída"]), "Tipo"] = "Entrada"
+    # Número
+    df_dinheiro_periodo["Valor"] = pd.to_numeric(df_dinheiro_periodo["Valor"], errors="coerce").fillna(0.0).astype(float)
+    # Mantém somente colunas esperadas
+    df_dinheiro_periodo = df_dinheiro_periodo[["Data", "Descrição", "Tipo", "Valor"]]
 
     df_dinheiro_ui = st.data_editor(
         df_dinheiro_periodo,
