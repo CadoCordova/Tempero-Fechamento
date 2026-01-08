@@ -373,6 +373,65 @@ def normalize_df_cat_export(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+
+def normalize_df_mov(df: pd.DataFrame) -> pd.DataFrame:
+    """Normaliza df de movimentos (transações) para uso interno.
+
+    Padroniza nomes comuns de colunas e garante as colunas básicas:
+    Data, Descrição, Tipo, Valor, Categoria, Conta.
+    """
+    if df is None or df.empty:
+        return pd.DataFrame()
+
+    df = df.copy()
+
+    # Remove Unnamed
+    df = df.loc[:, [c for c in df.columns if not str(c).startswith("Unnamed")]].copy()
+    df.columns = [str(c).strip() for c in df.columns]
+
+    # Mapeamentos comuns
+    rename_map = {
+        "Descricao": "Descrição",
+        "Descricao ": "Descrição",
+        "Descrição ": "Descrição",
+        "Data ": "Data",
+        "Categoria ": "Categoria",
+        "Conta ": "Conta",
+        "Origem": "Conta",
+    }
+    df.rename(columns=rename_map, inplace=True)
+
+    # Se houver colunas com nomes sem acento, tenta corrigir
+    for c in list(df.columns):
+        if c.lower() == "descricao":
+            df.rename(columns={c: "Descrição"}, inplace=True)
+        if c.lower() == "saidas":
+            df.rename(columns={c: "Saídas"}, inplace=True)
+        if c.lower() == "entradas":
+            df.rename(columns={c: "Entradas"}, inplace=True)
+
+    # Valor numérico
+    if "Valor" in df.columns:
+        df["Valor"] = df["Valor"].apply(parse_numeric_value)
+
+    # Data
+    if "Data" in df.columns:
+        df["Data"] = pd.to_datetime(df["Data"], errors="coerce").dt.date
+
+    # Tipo
+    if "Tipo" in df.columns:
+        df["Tipo"] = df["Tipo"].astype(str)
+
+    # Categoria
+    if "Categoria" in df.columns:
+        df["Categoria"] = df["Categoria"].astype(str)
+
+    # Conta
+    if "Conta" in df.columns:
+        df["Conta"] = df["Conta"].astype(str)
+
+    return df
+
 def extrair_descricao_linha(linha: dict):
     if "descricao" in linha and linha["descricao"] not in (None, ""):
         return linha["descricao"]
@@ -1332,6 +1391,14 @@ def load_monthly_fechamento_from_gdrive(periodo_ref: str):
             min_score=2
         )
 
+    # Fallback adicional: alguns fechamentos antigos podem salvar apenas colunas básicas (sem Tipo/Categoria)
+    if df_movs.empty:
+        df_movs = _best_sheet_by_columns(
+            excel_buf,
+            expected_cols=["Data", "Descrição", "Valor"],
+            min_score=2
+        )
+
     # IMPORTANTE: nossos arquivos gerados pelo app possuem uma aba técnica "ResumoDados" (tabela limpa)
     # e uma aba "Resumo" (layout com títulos e múltiplas tabelas). Para reabrir meses antigos,
     # sempre preferimos "ResumoDados".
@@ -1362,6 +1429,14 @@ def load_monthly_fechamento_from_gdrive(periodo_ref: str):
             excel_buf,
             expected_cols=["Categoria", "Entradas", "Saídas"],
             min_score=2
+        )
+
+    # Fallback adicional para categorias: algumas versões salvam apenas "Categoria" e "Saídas" ou variações
+    if df_cat.empty:
+        df_cat = _best_sheet_by_columns(
+            excel_buf,
+            expected_cols=["Categoria", "Saídas"],
+            min_score=1
         )
 
     df_dinheiro = _read_sheet_by_name_candidates(
@@ -1804,12 +1879,45 @@ if has_role("admin") and not dados_carregados:
 
         # OBS: o loader retorna chaves: movs, resumo, cat, dinheiro
         df_mov = dfs_hist.get("movs", pd.DataFrame())
+        df_mov = normalize_df_mov(df_mov)
 
+        # Se o arquivo antigo não tiver "Categorias" exportadas, tenta reconstruir a partir dos movimentos
+        # (requer ao menos: Categoria, Tipo, Valor)
         df_cat_export = dfs_hist.get("cat", pd.DataFrame())
         df_cat_export = normalize_df_cat_export(df_cat_export)
+        if (df_cat_export is None or df_cat_export.empty) and (df_mov is not None and not df_mov.empty):
+            cols_norm = {str(c).strip().lower() for c in df_mov.columns}
+            if "categoria" in cols_norm and "valor" in cols_norm:
+                # garante Tipo (Entrada/Saída); se não existir, tenta inferir por sinal do Valor
+                if "tipo" not in cols_norm:
+                    try:
+                        df_mov["Tipo"] = df_mov["Valor"].apply(lambda x: "Entrada" if float(x or 0) >= 0 else "Saída")
+                        df_mov["Valor"] = df_mov["Valor"].abs()
+                    except Exception:
+                        pass
 
-        # tenta carregar resumo (para título e números)
-        df_consolidado = dfs_hist.get("resumo", pd.DataFrame())
+                try:
+                    base = df_mov.copy()
+                    base["Tipo"] = base["Tipo"].astype(str)
+                    ent = (
+                        base[base["Tipo"].str.lower().str.contains("entrada")]
+                        .groupby("Categoria")["Valor"].sum()
+                        .rename("Entradas")
+                    )
+                    sai = (
+                        base[base["Tipo"].str.lower().str.contains("sa")]
+                        .groupby("Categoria")["Valor"].sum()
+                        .rename("Saídas")
+                    )
+                    df_cat_export = (
+                        pd.concat([ent, sai], axis=1)
+                        .fillna(0.0)
+                        .reset_index()
+                    )
+                    df_cat_export = normalize_df_cat_export(df_cat_export)
+                except Exception:
+                    pass
+.get("resumo", pd.DataFrame())
         if df_consolidado is not None and not df_consolidado.empty:
             linha = df_consolidado.iloc[0]
             # mantém nome_periodo apenas para exibição
