@@ -1138,6 +1138,7 @@ def load_monthly_fechamento_from_gdrive(periodo_ref: str):
 
     filename_fix = get_monthly_fechamento_file_name(periodo_ref)
     file_id = get_file_id_by_name(service, folder_id, filename_fix)
+    selected_name = filename_fix if file_id else None
 
     # Fallback: pega o mais recente do histórico do mesmo mês (inclui nomes com "dezembro_2025" e/ou timestamp)
     if not file_id:
@@ -1163,9 +1164,17 @@ def load_monthly_fechamento_from_gdrive(periodo_ref: str):
                 return x.get("modifiedTime") or x.get("createdTime") or ""
             candidatos = sorted(candidatos, key=_key, reverse=True)
             file_id = candidatos[0].get("id")
+            selected_name = candidatos[0].get("name")
 
     if not file_id:
         return None, {}
+
+    # guarda qual arquivo foi usado (útil para diagnóstico na UI)
+    try:
+        st.session_state["fechamento_loaded_file"] = selected_name or "(desconhecido)"
+        st.session_state["fechamento_loaded_ref"] = periodo_ref
+    except Exception:
+        pass
 
     request = service.files().get_media(fileId=file_id)
     excel_buf = BytesIO()
@@ -1323,15 +1332,25 @@ def load_monthly_fechamento_from_gdrive(periodo_ref: str):
             min_score=2
         )
 
+    # IMPORTANTE: nossos arquivos gerados pelo app possuem uma aba técnica "ResumoDados" (tabela limpa)
+    # e uma aba "Resumo" (layout com títulos e múltiplas tabelas). Para reabrir meses antigos,
+    # sempre preferimos "ResumoDados".
     df_resumo = _read_sheet_by_name_candidates(
         excel_buf,
-        ["Resumo", "ResumoDados", "Consolidado", "Resumo do período", "Resumo do periodo", "ResumoPeriodo"]
+        ["ResumoDados", "Consolidado", "ResumoPeriodo", "Resumo do período", "Resumo do periodo", "Resumo"]
     )
     if df_resumo.empty:
         df_resumo = _best_sheet_by_columns(
             excel_buf,
-            expected_cols=["Entradas", "Saídas", "Saldo", "Resultado"],
-            min_score=1
+            expected_cols=[
+                "Entradas totais",
+                "Saídas totais",
+                "Resultado do período",
+                "Saldo inicial",
+                "Saldo final",
+                "Nome do período",
+            ],
+            min_score=1,
         )
 
     df_cat = _read_sheet_by_name_candidates(
@@ -1455,6 +1474,14 @@ mes_selecionado = st.sidebar.selectbox(
     index=meses_disponiveis.index(mes_inferido) if mes_inferido in meses_disponiveis else 0,
     help="Este mês controla qual caixa em dinheiro e qual fechamento mensal serão carregados nas abas.",
 )
+
+# (Admin) Mostra qual arquivo de fechamento foi reaberto para o mês selecionado (quando aplicável)
+if has_role("admin"):
+    ref_loaded = st.session_state.get("fechamento_loaded_ref")
+    if ref_loaded == mes_selecionado:
+        nome_arq = st.session_state.get("fechamento_loaded_file")
+        if nome_arq:
+            st.sidebar.caption(f"📄 Fechamento reaberto: {nome_arq}")
 
 st.sidebar.markdown("---")
 st.sidebar.markdown(
