@@ -1917,7 +1917,9 @@ if has_role("admin") and not dados_carregados:
                     df_cat_export = normalize_df_cat_export(df_cat_export)
                 except Exception:
                     pass
-.get("resumo", pd.DataFrame())
+
+        # Consolidado (ResumoDados/Resumo): cards e saldos do período
+        df_consolidado = dfs_hist.get("resumo", pd.DataFrame())
         if df_consolidado is not None and not df_consolidado.empty:
             linha = df_consolidado.iloc[0]
             # mantém nome_periodo apenas para exibição
