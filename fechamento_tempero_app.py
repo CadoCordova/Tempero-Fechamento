@@ -4,8 +4,6 @@ from pathlib import Path
 from io import BytesIO
 from datetime import datetime
 import json
-import re
-import unicodedata
 
 import pandas as pd
 import streamlit as st
@@ -327,110 +325,6 @@ def normalizar_texto(txt):
         s = s.replace(ac, sem)
     return s
 
-
-def normalize_df_cat_export(df: pd.DataFrame) -> pd.DataFrame:
-    """Normaliza o dataframe de categorias para evitar KeyError ao reabrir meses antigos.
-    Garante colunas: Categoria, Entradas, Saídas (com acentuação).
-    """
-    if df is None:
-        df = pd.DataFrame()
-
-    df = df.copy()
-
-    # Caso vazio: retorna estrutura padrão
-    if df.empty:
-        return pd.DataFrame(columns=["Categoria", "Entradas", "Saídas"])
-
-    # Limpa nomes de colunas e remove colunas técnicas (ex.: Unnamed: 0)
-    df.columns = [str(c).strip() for c in df.columns]
-    df = df.loc[:, [c for c in df.columns if not str(c).startswith("Unnamed")]].copy()
-
-    # Renomeia colunas comuns/variantes (sem acento, singular, etc.)
-    rename_map = {}
-    for c in df.columns:
-        cl = str(c).strip().lower()
-        if cl in ("categoria", "categorias"):
-            rename_map[c] = "Categoria"
-        elif cl in ("entrada", "entradas", "total entradas"):
-            rename_map[c] = "Entradas"
-        elif cl in ("saida", "saidas", "saídas", "total saidas", "total saídas"):
-            rename_map[c] = "Saídas"
-
-    if rename_map:
-        df = df.rename(columns=rename_map)
-
-    # Garante presença das colunas esperadas
-    if "Categoria" not in df.columns:
-        df["Categoria"] = ""
-    if "Entradas" not in df.columns:
-        df["Entradas"] = 0.0
-    if "Saídas" not in df.columns:
-        df["Saídas"] = 0.0
-
-    df = df[["Categoria", "Entradas", "Saídas"]].copy()
-    df["Entradas"] = pd.to_numeric(df["Entradas"], errors="coerce").fillna(0.0)
-    df["Saídas"] = pd.to_numeric(df["Saídas"], errors="coerce").fillna(0.0)
-    return df
-
-
-
-def normalize_df_mov(df: pd.DataFrame) -> pd.DataFrame:
-    """Normaliza df de movimentos (transações) para uso interno.
-
-    Padroniza nomes comuns de colunas e garante as colunas básicas:
-    Data, Descrição, Tipo, Valor, Categoria, Conta.
-    """
-    if df is None or df.empty:
-        return pd.DataFrame()
-
-    df = df.copy()
-
-    # Remove Unnamed
-    df = df.loc[:, [c for c in df.columns if not str(c).startswith("Unnamed")]].copy()
-    df.columns = [str(c).strip() for c in df.columns]
-
-    # Mapeamentos comuns
-    rename_map = {
-        "Descricao": "Descrição",
-        "Descricao ": "Descrição",
-        "Descrição ": "Descrição",
-        "Data ": "Data",
-        "Categoria ": "Categoria",
-        "Conta ": "Conta",
-        "Origem": "Conta",
-    }
-    df.rename(columns=rename_map, inplace=True)
-
-    # Se houver colunas com nomes sem acento, tenta corrigir
-    for c in list(df.columns):
-        if c.lower() == "descricao":
-            df.rename(columns={c: "Descrição"}, inplace=True)
-        if c.lower() == "saidas":
-            df.rename(columns={c: "Saídas"}, inplace=True)
-        if c.lower() == "entradas":
-            df.rename(columns={c: "Entradas"}, inplace=True)
-
-    # Valor numérico
-    if "Valor" in df.columns:
-        df["Valor"] = df["Valor"].apply(parse_numeric_value)
-
-    # Data
-    if "Data" in df.columns:
-        df["Data"] = pd.to_datetime(df["Data"], errors="coerce").dt.date
-
-    # Tipo
-    if "Tipo" in df.columns:
-        df["Tipo"] = df["Tipo"].astype(str)
-
-    # Categoria
-    if "Categoria" in df.columns:
-        df["Categoria"] = df["Categoria"].astype(str)
-
-    # Conta
-    if "Conta" in df.columns:
-        df["Conta"] = df["Conta"].astype(str)
-
-    return df
 
 def extrair_descricao_linha(linha: dict):
     if "descricao" in linha and linha["descricao"] not in (None, ""):
@@ -826,49 +720,6 @@ def get_ano_mes(nome_periodo: str):
 
 
 # ========================
-#  Util: extrair mês (YYYY-MM) de nomes de arquivos do Drive
-# ========================
-def _normalize_str(s: str) -> str:
-    return ''.join(
-        c for c in unicodedata.normalize('NFD', (s or '').lower())
-        if unicodedata.category(c) != 'Mn'
-    )
-
-def extract_periodo_ref_from_filename(filename: str) -> str | None:
-    """Extrai YYYY-MM de padrões comuns de nomes de arquivos.
-
-    Suporta:
-      - ...2025-12... (padrão direto)
-      - ..._20251231_... (timestamp YYYYMMDD)
-      - ...dezembro_2025... (mês por extenso pt-BR)
-    """
-    if not filename:
-        return None
-
-    m = re.search(r"(20\d{2}-\d{2})", filename)
-    if m:
-        return m.group(1)
-
-    # Timestamp com data (YYYYMMDD) dentro do nome
-    m = re.search(r"(20\d{2})(0[1-9]|1[0-2])([0-3]\d)", filename)
-    if m:
-        return f"{m.group(1)}-{m.group(2)}"
-
-    # Mês por extenso (sem acento)
-    month_map = {
-        'janeiro': '01', 'fevereiro': '02', 'marco': '03', 'abril': '04', 'maio': '05',
-        'junho': '06', 'julho': '07', 'agosto': '08', 'setembro': '09', 'outubro': '10',
-        'novembro': '11', 'dezembro': '12',
-    }
-    n = _normalize_str(filename)
-    m = re.search(r"(janeiro|fevereiro|marco|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)[_\-\s]*(20\d{2})", n)
-    if m:
-        return f"{m.group(2)}-{month_map[m.group(1)]}"
-
-    return None
-
-
-# ========================
 #  Google Drive (OAuth)
 # ========================
 
@@ -1128,370 +979,6 @@ def save_cash_to_gdrive(periodo_ref: str, df: pd.DataFrame):
         ).execute()
 
 
-
-# ========================
-#  Fechamento mensal (arquivo mensal fixo no Drive)
-# ========================
-
-def get_monthly_fechamento_file_name(periodo_ref: str) -> str:
-    """Nome fixo do fechamento mensal no Drive (para reabrir depois).
-
-    Ex.: fechamento_tempero_2025-12.xlsx
-    """
-    return f"fechamento_tempero_{periodo_ref}.xlsx"
-
-
-def get_file_id_by_name(service, folder_id: str, filename: str):
-    """Procura um arquivo pelo nome dentro da pasta de históricos."""
-    query = f"'{folder_id}' in parents and name = '{filename}' and trashed = false"
-    results = (
-        service.files()
-        .list(q=query, spaces="drive", fields="files(id, name)", pageSize=10)
-        .execute()
-    )
-    files = results.get("files", [])
-    return files[0]["id"] if files else None
-
-
-def save_monthly_fechamento_to_gdrive(periodo_ref: str, buffer: BytesIO):
-    """Salva (ou atualiza) o fechamento mensal fixo do mês no Drive."""
-    service = get_gdrive_service()
-    folder_id = get_history_folder_id(service)
-
-    filename = get_monthly_fechamento_file_name(periodo_ref)
-    file_id = get_file_id_by_name(service, folder_id, filename)
-
-    buffer.seek(0)
-    media = MediaIoBaseUpload(
-        buffer,
-        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        resumable=False,
-    )
-
-    if file_id:
-        service.files().update(fileId=file_id, media_body=media).execute()
-    else:
-        file_metadata = {"name": filename, "parents": [folder_id]}
-        service.files().create(body=file_metadata, media_body=media, fields="id").execute()
-
-
-
-def load_monthly_fechamento_from_gdrive(periodo_ref: str):
-    """Carrega o fechamento do mês para reabrir nas abas (sem precisar reenviar extratos).
-
-    Prioridade de busca:
-      1) Arquivo mensal fixo: fechamento_tempero_YYYY-MM.xlsx
-      2) Fallback (histórico): último arquivo do Drive cujo nome contenha o mês e comece com "fechamento_tempero_"
-
-    Retorno:
-      (excel_buf, dfs) onde
-        excel_buf: BytesIO do Excel
-        dfs: dict com dataframes das abas principais (se existirem)
-            - movimentos
-            - resumo_dados
-            - categorias
-            - dinheiro
-    """
-    service = get_gdrive_service()
-    folder_id = get_history_folder_id(service)
-
-    filename_fix = get_monthly_fechamento_file_name(periodo_ref)
-    file_id = get_file_id_by_name(service, folder_id, filename_fix)
-    selected_name = filename_fix if file_id else None
-
-    # Fallback: pega o mais recente do histórico do mesmo mês (inclui nomes com "dezembro_2025" e/ou timestamp)
-    if not file_id:
-        try:
-            arquivos = list_history_from_gdrive()
-        except Exception:
-            arquivos = []
-
-        candidatos = []
-        for f in arquivos:
-            nome = f.get("name", "") or ""
-            if not nome.lower().endswith(".xlsx"):
-                continue
-            if not nome.startswith("fechamento_tempero_"):
-                continue
-            peri = extract_periodo_ref_from_filename(nome)
-            if peri != periodo_ref:
-                continue
-            candidatos.append(f)
-
-        if candidatos:
-            def _key(x):
-                return x.get("modifiedTime") or x.get("createdTime") or ""
-            candidatos = sorted(candidatos, key=_key, reverse=True)
-            file_id = candidatos[0].get("id")
-            selected_name = candidatos[0].get("name")
-
-    if not file_id:
-        return None, {}
-
-    # guarda qual arquivo foi usado (útil para diagnóstico na UI)
-    try:
-        st.session_state["fechamento_loaded_file"] = selected_name or "(desconhecido)"
-        st.session_state["fechamento_loaded_ref"] = periodo_ref
-    except Exception:
-        pass
-
-    request = service.files().get_media(fileId=file_id)
-    excel_buf = BytesIO()
-    downloader = MediaIoBaseDownload(excel_buf, request)
-    done = False
-    while not done:
-        _, done = downloader.next_chunk()
-    excel_buf.seek(0)
-
-    def _norm_text(s: str) -> str:
-        s = str(s or "")
-        s = s.strip().lower()
-        s = "".join(ch for ch in unicodedata.normalize("NFKD", s) if not unicodedata.combining(ch))
-        s = re.sub(r"\s+", " ", s)
-        return s
-
-    def _read_sheet_by_name_candidates(excel_bytes: BytesIO, candidates: list[str]) -> pd.DataFrame:
-        """Tenta ler uma planilha por nome (case/acentos-insensitive)"""
-        try:
-            excel_bytes.seek(0)
-            xf = pd.ExcelFile(excel_bytes)
-            sheet_map = {_norm_text(n): n for n in xf.sheet_names}
-        except Exception:
-            return pd.DataFrame()
-
-        for cand in candidates:
-            key = _norm_text(cand)
-            real = sheet_map.get(key)
-            if real:
-                try:
-                    excel_bytes.seek(0)
-                    return pd.read_excel(excel_bytes, sheet_name=real)
-                except Exception:
-                    continue
-        return pd.DataFrame()
-
-    def _read_sheet_with_header_guess(excel_bytes: BytesIO, sheet_name: str, expected_cols: list[str]) -> pd.DataFrame:
-        """Lê uma aba tentando descobrir automaticamente em qual linha está o cabeçalho.
-
-        Útil para arquivos históricos onde a 1ª linha tem título, e o header real vem algumas linhas abaixo.
-        """
-        expected_norm = {_norm_text(c) for c in expected_cols}
-        try:
-            excel_bytes.seek(0)
-            preview = pd.read_excel(excel_bytes, sheet_name=sheet_name, header=None, nrows=30)
-        except Exception:
-            return pd.DataFrame()
-
-        best_row = 0
-        best_score = -1
-        for i in range(min(30, len(preview))):
-            row_vals = preview.iloc[i].tolist()
-            row_norm = {_norm_text(v) for v in row_vals if str(v).strip() not in ["", "nan", "None"]}
-            score = len(expected_norm.intersection(row_norm))
-            if score > best_score:
-                best_score = score
-                best_row = i
-
-        try:
-            excel_bytes.seek(0)
-            df = pd.read_excel(excel_bytes, sheet_name=sheet_name, header=best_row)
-        except Exception:
-            return pd.DataFrame()
-
-        # remove colunas Unnamed e normaliza nomes
-        df = df.loc[:, [c for c in df.columns if not str(c).startswith("Unnamed")]].copy()
-        df.columns = [str(c).strip() for c in df.columns]
-        return df
-
-    def _best_sheet_by_columns(excel_bytes: BytesIO, expected_cols: list[str], min_score: int = 2) -> pd.DataFrame:
-        """Fallback: varre sheets e escolhe a que melhor casa com as colunas esperadas.
-
-        Agora com detecção automática de header (não assume que a linha 0 é o cabeçalho).
-        """
-        try:
-            excel_bytes.seek(0)
-            xf = pd.ExcelFile(excel_bytes)
-        except Exception:
-            return pd.DataFrame()
-
-        expected_norm = {_norm_text(c) for c in expected_cols}
-        best_score = -1
-        best_sheet = None
-        best_header_row = 0
-
-        for sh in xf.sheet_names:
-            try:
-                excel_bytes.seek(0)
-                preview = pd.read_excel(excel_bytes, sheet_name=sh, header=None, nrows=20)
-                # acha a melhor linha candidata a header dentro da aba
-                local_best = -1
-                local_row = 0
-                for i in range(min(20, len(preview))):
-                    row_vals = preview.iloc[i].tolist()
-                    row_norm = {_norm_text(v) for v in row_vals if str(v).strip() not in ["", "nan", "None"]}
-                    score = len(expected_norm.intersection(row_norm))
-                    if score > local_best:
-                        local_best = score
-                        local_row = i
-                if local_best > best_score:
-                    best_score = local_best
-                    best_sheet = sh
-                    best_header_row = local_row
-            except Exception:
-                continue
-
-        if best_sheet and best_score >= min_score:
-            try:
-                excel_bytes.seek(0)
-                df = pd.read_excel(excel_bytes, sheet_name=best_sheet, header=best_header_row)
-                df = df.loc[:, [c for c in df.columns if not str(c).startswith("Unnamed")]].copy()
-                df.columns = [str(c).strip() for c in df.columns]
-                return df
-            except Exception:
-                # tenta mais uma vez com heurística completa
-                return _read_sheet_with_header_guess(excel_bytes, best_sheet, expected_cols)
-
-        return pd.DataFrame()
-
-        expected_norm = {_norm_text(c) for c in expected_cols}
-        best_score = -1
-        best_sheet = None
-
-        for sh in xf.sheet_names:
-            try:
-                excel_bytes.seek(0)
-                # lê só o header (rápido)
-                df_head = pd.read_excel(excel_bytes, sheet_name=sh, nrows=1)
-                cols_norm = {_norm_text(c) for c in df_head.columns}
-                score = len(expected_norm.intersection(cols_norm))
-                if score > best_score:
-                    best_score = score
-                    best_sheet = sh
-            except Exception:
-                continue
-
-        if best_sheet and best_score >= min_score:
-            try:
-                excel_bytes.seek(0)
-                return pd.read_excel(excel_bytes, sheet_name=best_sheet)
-            except Exception:
-                return pd.DataFrame()
-
-        return pd.DataFrame()
-
-    # Primeiro tenta por nome; se não achar, tenta por colunas (fallback robusto para históricos antigos)
-    df_movs = _read_sheet_by_name_candidates(
-        excel_buf,
-        ["Movimentos", "Movimentacoes", "Movimentações", "Lancamentos", "Lançamentos", "Transacoes", "Transações"]
-    )
-    if df_movs.empty:
-        df_movs = _best_sheet_by_columns(
-            excel_buf,
-            expected_cols=["Data", "Descrição", "Tipo", "Valor", "Categoria", "Entradas", "Saídas"],
-            min_score=2
-        )
-
-    # Fallback adicional: alguns fechamentos antigos podem salvar apenas colunas básicas (sem Tipo/Categoria)
-    if df_movs.empty:
-        df_movs = _best_sheet_by_columns(
-            excel_buf,
-            expected_cols=["Data", "Descrição", "Valor"],
-            min_score=2
-        )
-
-    # IMPORTANTE: nossos arquivos gerados pelo app possuem uma aba técnica "ResumoDados" (tabela limpa)
-    # e uma aba "Resumo" (layout com títulos e múltiplas tabelas). Para reabrir meses antigos,
-    # sempre preferimos "ResumoDados".
-    df_resumo = _read_sheet_by_name_candidates(
-        excel_buf,
-        ["ResumoDados", "Consolidado", "ResumoPeriodo", "Resumo do período", "Resumo do periodo", "Resumo"]
-    )
-    if df_resumo.empty:
-        df_resumo = _best_sheet_by_columns(
-            excel_buf,
-            expected_cols=[
-                "Entradas totais",
-                "Saídas totais",
-                "Resultado do período",
-                "Saldo inicial",
-                "Saldo final",
-                "Nome do período",
-            ],
-            min_score=1,
-        )
-
-    df_cat = _read_sheet_by_name_candidates(
-        excel_buf,
-        ["Categorias", "ResumoPorCategoria", "Resumo por categoria", "CategoriasExport", "Categorias_Export"]
-    )
-    if df_cat.empty:
-        df_cat = _best_sheet_by_columns(
-            excel_buf,
-            expected_cols=["Categoria", "Entradas", "Saídas"],
-            min_score=2
-        )
-
-    # Fallback adicional para categorias: algumas versões salvam apenas "Categoria" e "Saídas" ou variações
-    if df_cat.empty:
-        df_cat = _best_sheet_by_columns(
-            excel_buf,
-            expected_cols=["Categoria", "Saídas"],
-            min_score=1
-        )
-
-    df_dinheiro = _read_sheet_by_name_candidates(
-        excel_buf,
-        ["Dinheiro", "CaixaDinheiro", "Caixa", "Caixa diário", "Caixa Diario", "CaixaDiario"]
-    )
-    if df_dinheiro.empty:
-        df_dinheiro = _best_sheet_by_columns(
-            excel_buf,
-            expected_cols=["Data", "Descrição", "Tipo", "Valor"],
-            min_score=2
-        )
-
-    dfs = {
-        "movs": df_movs,
-        "resumo": df_resumo,
-        "cat": df_cat,
-        "dinheiro": df_dinheiro,
-    }
-
-    # Higienizações leves (evita colunas Unnamed e normaliza nomes)
-    for k, df in list(dfs.items()):
-        if df is None or not isinstance(df, pd.DataFrame) or df.empty:
-            dfs[k] = pd.DataFrame()
-            continue
-        # remove "Unnamed"
-        df = df.loc[:, [c for c in df.columns if not str(c).startswith("Unnamed")]].copy()
-        df.columns = [str(c).strip() for c in df.columns]
-        dfs[k] = df
-
-    excel_buf.seek(0)
-    return excel_buf, dfs
-
-
-
-
-def list_available_months_from_gdrive() -> list[str]:
-    """Lista meses (YYYY-MM) encontrados nos arquivos do Drive (histórico)."""
-    try:
-        arquivos = list_history_from_gdrive()
-    except Exception:
-        return []
-
-    meses = set()
-    for f in arquivos:
-        nome = f.get("name", "")
-        periodo = extract_periodo_ref_from_filename(nome)
-        if periodo:
-            meses.add(periodo)
-
-    # também inclui o mês atual
-    meses.add(datetime.today().strftime("%Y-%m"))
-    return sorted(meses)
-
-
 # ========================
 #  Config Streamlit
 # ========================
@@ -1530,34 +1017,6 @@ nome_periodo = st.sidebar.text_input(
     help='Ex.: "2025-11 1ª quinzena", "2025-10 mês cheio"',
 )
 
-
-# Seleção do mês de trabalho/consulta (vale para Caixa e também para reabrir fechamentos)
-mes_atual = datetime.today().strftime("%Y-%m")
-mes_inferido = get_ano_mes(nome_periodo) or mes_atual
-
-# Para admin, tenta listar meses existentes no Drive; para operador, mantém lista simples
-if has_role("admin"):
-    meses_disponiveis = list_available_months_from_gdrive()
-    if mes_inferido not in meses_disponiveis:
-        meses_disponiveis = sorted(set(meses_disponiveis + [mes_inferido]))
-else:
-    meses_disponiveis = sorted({mes_atual, mes_inferido})
-
-mes_selecionado = st.sidebar.selectbox(
-    "Mês para visualizar/editar (YYYY-MM)",
-    options=meses_disponiveis,
-    index=meses_disponiveis.index(mes_inferido) if mes_inferido in meses_disponiveis else 0,
-    help="Este mês controla qual caixa em dinheiro e qual fechamento mensal serão carregados nas abas.",
-)
-
-# (Admin) Mostra qual arquivo de fechamento foi reaberto para o mês selecionado (quando aplicável)
-if has_role("admin"):
-    ref_loaded = st.session_state.get("fechamento_loaded_ref")
-    if ref_loaded == mes_selecionado:
-        nome_arq = st.session_state.get("fechamento_loaded_file")
-        if nome_arq:
-            st.sidebar.caption(f"📄 Fechamento reaberto: {nome_arq}")
-
 st.sidebar.markdown("---")
 st.sidebar.markdown(
     "Feito para a **Tempero das Gurias** 💕\n\n"
@@ -1577,7 +1036,7 @@ if st.session_state.get("auth_ok"):
 #  Carrega livro-caixa mensal de dinheiro (por mês cheio)
 # ========================
 
-ano_mes_ref = mes_selecionado
+ano_mes_ref = get_ano_mes(nome_periodo) or datetime.today().strftime("%Y-%m")
 
 # Mantém em cache por mês para evitar leituras repetidas no Drive
 if (
@@ -1603,7 +1062,6 @@ dados_carregados = False
 mensagem_erro = None
 
 entradas_totais = saidas_totais = resultado_consolidado = 0.0
-saldo_inicial = 0.0
 saldo_final = 0.0
 ent_itau = sai_itau = res_itau = 0.0
 ent_pag = sai_pag = res_pag = 0.0
@@ -1851,109 +1309,6 @@ if arquivo_itau and arquivo_pag:
             mensagem_erro = str(e)
 
 
-
-# ========================
-#  Reabrir fechamento mensal do Drive (quando não houver upload no período)
-# ========================
-
-if has_role("admin") and not dados_carregados:
-    cache_key = f"fechamento_cache_{ano_mes_ref}"
-    if st.session_state.get("fechamento_cache_ref") != ano_mes_ref:
-        st.session_state["fechamento_cache_ref"] = ano_mes_ref
-        st.session_state.pop("fechamento_cache_data", None)
-
-    if st.session_state.get("fechamento_cache_data") is None:
-        try:
-            excel_hist, dfs_hist = load_monthly_fechamento_from_gdrive(ano_mes_ref)
-            if excel_hist is not None:
-                st.session_state["fechamento_cache_data"] = (excel_hist, dfs_hist)
-        except Exception:
-            st.session_state["fechamento_cache_data"] = None
-
-    cached = st.session_state.get("fechamento_cache_data")
-    if cached:
-        excel_hist, dfs_hist = cached
-        # Preenche variáveis principais para as abas (visualização/edição)
-        excel_buffer = excel_hist
-        dados_carregados = True
-
-        # OBS: o loader retorna chaves: movs, resumo, cat, dinheiro
-        df_mov = dfs_hist.get("movs", pd.DataFrame())
-        df_mov = normalize_df_mov(df_mov)
-
-        # Se o arquivo antigo não tiver "Categorias" exportadas, tenta reconstruir a partir dos movimentos
-        # (requer ao menos: Categoria, Tipo, Valor)
-        df_cat_export = dfs_hist.get("cat", pd.DataFrame())
-        df_cat_export = normalize_df_cat_export(df_cat_export)
-        if (df_cat_export is None or df_cat_export.empty) and (df_mov is not None and not df_mov.empty):
-            cols_norm = {str(c).strip().lower() for c in df_mov.columns}
-            if "categoria" in cols_norm and "valor" in cols_norm:
-                # garante Tipo (Entrada/Saída); se não existir, tenta inferir por sinal do Valor
-                if "tipo" not in cols_norm:
-                    try:
-                        df_mov["Tipo"] = df_mov["Valor"].apply(lambda x: "Entrada" if float(x or 0) >= 0 else "Saída")
-                        df_mov["Valor"] = df_mov["Valor"].abs()
-                    except Exception:
-                        pass
-
-                try:
-                    base = df_mov.copy()
-                    base["Tipo"] = base["Tipo"].astype(str)
-                    ent = (
-                        base[base["Tipo"].str.lower().str.contains("entrada")]
-                        .groupby("Categoria")["Valor"].sum()
-                        .rename("Entradas")
-                    )
-                    sai = (
-                        base[base["Tipo"].str.lower().str.contains("sa")]
-                        .groupby("Categoria")["Valor"].sum()
-                        .rename("Saídas")
-                    )
-                    df_cat_export = (
-                        pd.concat([ent, sai], axis=1)
-                        .fillna(0.0)
-                        .reset_index()
-                    )
-                    df_cat_export = normalize_df_cat_export(df_cat_export)
-                except Exception:
-                    pass
-
-        # Consolidado (ResumoDados/Resumo): cards e saldos do período
-        df_consolidado = dfs_hist.get("resumo", pd.DataFrame())
-        if df_consolidado is not None and not df_consolidado.empty:
-            linha = df_consolidado.iloc[0]
-            # mantém nome_periodo apenas para exibição
-            try:
-                nome_periodo = str(linha.get("Nome do período", nome_periodo))
-            except Exception:
-                pass
-            entradas_totais = float(linha.get("Entradas totais", linha.get("Entradas totais", 0.0)) or 0.0)
-            saidas_totais = float(linha.get("Saídas totais", linha.get("Saídas totais", 0.0)) or 0.0)
-            resultado_consolidado = float(linha.get("Resultado do período", linha.get("Resultado do período", 0.0)) or 0.0)
-            saldo_inicial = float(linha.get("Saldo inicial", 0.0) or 0.0)
-            saldo_final = float(linha.get("Saldo final", 0.0) or 0.0)
-
-        # Diagnóstico (apenas admin): se vier vazio, mostra detalhes na própria tela
-        if has_role("admin"):
-            try:
-                if (df_mov.empty and df_cat_export.empty and (df_consolidado is None or df_consolidado.empty)):
-                    st.warning("Fechamento do Drive foi encontrado, mas não consegui identificar as abas/colunas do Excel deste mês. Abra o diagnóstico abaixo e me envie um print (abas + colunas) que eu ajusto o parser.")
-                    with st.expander("Diagnóstico do arquivo de fechamento (admin)", expanded=False):
-                        try:
-                            excel_hist.seek(0)
-                            xf_dbg = pd.ExcelFile(excel_hist)
-                            st.write("Abas encontradas no Excel:", xf_dbg.sheet_names)
-                        except Exception as e:
-                            st.write("Não consegui ler as abas do Excel:", str(e))
-                        st.write("Colunas detectadas em movs:", list(df_mov.columns) if not df_mov.empty else "(vazio)")
-                        st.write("Colunas detectadas em cat:", list(df_cat_export.columns) if not df_cat_export.empty else "(vazio)")
-                        st.write("Colunas detectadas em resumo:", list(df_consolidado.columns) if (df_consolidado is not None and not df_consolidado.empty) else "(vazio)")
-            except Exception:
-                pass
-
-
-
-
 # ========================
 #  Abas (ordem: Caixa, Fechamento, Categorias, Histórico)
 # ========================
@@ -2011,50 +1366,6 @@ with tab1:
     # Garante índice limpo (evita aparecer contagem antiga do Excel)
     df_dinheiro_periodo = df_dinheiro_periodo.reset_index(drop=True)
 
-    col_add1, col_add2 = st.columns([1, 4])
-    with col_add1:
-        if st.button("Adicionar lançamento"):
-            novo = pd.DataFrame(
-                [{
-                    "Data": datetime.today().date(),
-                    "Descrição": "",
-                    "Tipo": "Entrada",
-                    "Valor": 0.0,
-                }],
-                columns=["Data", "Descrição", "Tipo", "Valor"],
-            )
-            df_novo = pd.concat([df_dinheiro_periodo, novo], ignore_index=True)
-            st.session_state["df_dinheiro_periodo"] = df_novo
-            st.rerun()
-
-    # --- Sanitização de tipos (evita ArrowTypeError no st.data_editor / pyarrow)
-    df_dinheiro_periodo = df_dinheiro_periodo.copy()
-    # garante colunas padrão
-    for _col in ["Data", "Descrição", "Tipo", "Valor"]:
-        if _col not in df_dinheiro_periodo.columns:
-            df_dinheiro_periodo[_col] = None
-    # Data: datetime64[ns]
-    df_dinheiro_periodo["Data"] = pd.to_datetime(df_dinheiro_periodo["Data"], errors="coerce")
-    # Texto
-    df_dinheiro_periodo["Descrição"] = df_dinheiro_periodo["Descrição"].fillna("").astype(str)
-    df_dinheiro_periodo["Tipo"] = df_dinheiro_periodo["Tipo"].fillna("Entrada").astype(str)
-    df_dinheiro_periodo.loc[~df_dinheiro_periodo["Tipo"].isin(["Entrada", "Saída"]), "Tipo"] = "Entrada"
-    # Número
-    df_dinheiro_periodo["Valor"] = pd.to_numeric(df_dinheiro_periodo["Valor"], errors="coerce").fillna(0.0).astype(float)
-    # Mantém somente colunas esperadas
-    df_dinheiro_periodo = df_dinheiro_periodo[["Data", "Descrição", "Tipo", "Valor"]]
-
-    # Sanitiza tipos para evitar erros do pyarrow no data_editor
-    df_dinheiro_periodo = df_dinheiro_periodo.copy()
-    if "Data" in df_dinheiro_periodo.columns:
-        df_dinheiro_periodo["Data"] = pd.to_datetime(df_dinheiro_periodo["Data"], errors="coerce").dt.date
-    if "Descrição" in df_dinheiro_periodo.columns:
-        df_dinheiro_periodo["Descrição"] = df_dinheiro_periodo["Descrição"].fillna("").astype(str)
-    if "Tipo" in df_dinheiro_periodo.columns:
-        df_dinheiro_periodo["Tipo"] = df_dinheiro_periodo["Tipo"].fillna("Entrada").astype(str)
-    if "Valor" in df_dinheiro_periodo.columns:
-        df_dinheiro_periodo["Valor"] = pd.to_numeric(df_dinheiro_periodo["Valor"], errors="coerce").fillna(0.0).astype(float)
-
     df_dinheiro_ui = st.data_editor(
         df_dinheiro_periodo,
         num_rows="dynamic",
@@ -2089,46 +1400,41 @@ with tab1:
         salvar_caixa = st.button("Salvar lançamentos de dinheiro")
 
 
-if salvar_caixa:
-    try:
-        df_to_save = df_din_limpo.reset_index(drop=True).copy()
+    # Totais do mês (caixa) — exibição sempre visível
+    df_din_calc = df_din_limpo.copy()
+    if not df_din_calc.empty and "Valor" in df_din_calc.columns:
+        df_din_calc = df_din_calc[df_din_calc["Valor"].fillna(0) > 0]
 
-        # Atualiza cache do mês e salva no Drive (arquivo mensal)
-        st.session_state["df_dinheiro_periodo"] = df_to_save
-        st.session_state["cash_period_ref"] = ano_mes_ref
+    entradas_d = df_din_calc.loc[df_din_calc["Tipo"] == "Entrada", "Valor"].sum()
+    saidas_d = df_din_calc.loc[df_din_calc["Tipo"] == "Saída", "Valor"].sum()
+    saldo_d = entradas_d - saidas_d
 
-        save_cash_to_gdrive(ano_mes_ref, df_to_save)
-        st.success(f"Caixa de {ano_mes_ref} salvo com sucesso no Google Drive!")
-        st.rerun()
-    except Exception as e:
-        st.error(f"Erro ao salvar caixa diário no Drive: {e}")
-
-# Totais do mês (caixa) apenas para exibição na aba
-df_din_calc = df_din_limpo.copy()
-if not df_din_calc.empty and "Valor" in df_din_calc.columns:
-    df_din_calc = df_din_calc[df_din_calc["Valor"] > 0]
-
-entradas_d = df_din_calc.loc[
-    df_din_calc["Tipo"] == "Entrada", "Valor"
-].sum()
-saidas_d = df_din_calc.loc[
-    df_din_calc["Tipo"] == "Saída", "Valor"
-].sum()
-saldo_d = entradas_d - saidas_d
-
-st.markdown("---")
-col_c1, col_c2, col_c3 = st.columns(3)
-with col_c1:
-    st.write("Entradas em dinheiro no período:", format_currency(entradas_d))
-with col_c2:
-    st.write(
-        "Saídas em dinheiro no período:",
-        format_currency(-saidas_d) if saidas_d else "R$ 0,00",
-    )
-with col_c3:
-    st.write("Saldo do dinheiro no período:", format_currency(saldo_d))
+    st.markdown("---")
+    col_c1, col_c2, col_c3 = st.columns(3)
+    with col_c1:
+        st.write("Entradas em dinheiro no período:", format_currency(entradas_d))
+    with col_c2:
+        st.write(
+            "Saídas em dinheiro no período:",
+            format_currency(-saidas_d) if saidas_d else "R$ 0,00",
+        )
+    with col_c3:
+        st.write("Saldo do dinheiro no período:", format_currency(saldo_d))
 
 
+    if salvar_caixa:
+        try:
+            df_to_save = df_din_limpo.reset_index(drop=True).copy()
+
+            # Atualiza cache do mês e salva no Drive (arquivo mensal)
+            st.session_state["df_dinheiro_periodo"] = df_to_save
+            st.session_state["cash_period_ref"] = ano_mes_ref
+
+            save_cash_to_gdrive(ano_mes_ref, df_to_save)
+            st.success(f"Caixa de {ano_mes_ref} salvo com sucesso no Google Drive!")
+            st.rerun()
+        except Exception as e:
+            st.error(f"Erro ao salvar caixa diário no Drive: {e}")
 
 
 # ---------- ABA 2: Fechamento Mensal ----------
@@ -2241,12 +1547,10 @@ if tab2 is not None:
                 '<div class="tempero-section-sub">Baseado nas categorias atuais (já considera regras salvas anteriormente).</div>',
                 unsafe_allow_html=True,
             )
-            df_cat_display = normalize_df_cat_export(df_cat_export).copy()
+            df_cat_display = df_cat_export.copy()
             if not df_cat_display.empty:
-                if "Entradas" in df_cat_display.columns:
-                    df_cat_display["Entradas"] = df_cat_display["Entradas"].map(format_currency)
-                if "Saídas" in df_cat_display.columns:
-                    df_cat_display["Saídas"] = df_cat_display["Saídas"].map(format_currency)
+                df_cat_display["Entradas"] = df_cat_display["Entradas"].map(format_currency)
+                df_cat_display["Saídas"] = df_cat_display["Saídas"].map(format_currency)
             st.dataframe(df_cat_display, use_container_width=True)
 
             # Relatório
@@ -2273,8 +1577,6 @@ if tab2 is not None:
                 filename = f"fechamento_tempero_{slug}_{timestamp}.xlsx"
                 try:
                     upload_history_to_gdrive(excel_buffer, filename)
-                    # também mantém um arquivo mensal fixo para reabrir/editar depois
-                    save_monthly_fechamento_to_gdrive(ano_mes_ref, excel_buffer)
                     st.success(
                         f"Relatório salvo no histórico (Google Drive) como: {filename}"
                     )
@@ -2378,88 +1680,7 @@ if tab3 is not None:
                     f"{alteracoes} regra(s) de categorização salva(s). "
                     "Os próximos fechamentos já virão com essas categorias aplicadas."
                 )
-
                 st.rerun()
-
-            st.markdown("---")
-            st.markdown(
-                '<div class="tempero-section-sub">Opcional: se você estiver reabrindo um mês antigo, '
-                "você pode salvar o fechamento atualizado diretamente no Drive (arquivo mensal fixo).</div>",
-                unsafe_allow_html=True,
-            )
-
-            if st.button("Salvar fechamento atualizado no Drive (mês selecionado)"):
-                try:
-                    # Recalcula o resumo por categoria a partir do dataframe editado
-                    df_base = edited_df.copy()
-                    for col in ["Valor"]:
-                        if col in df_base.columns:
-                            df_base[col] = pd.to_numeric(df_base[col], errors="coerce").fillna(0.0)
-
-                    df_ent = (
-                        df_base[df_base.get("Tipo") == "Entrada"]
-                        .groupby("Categoria")["Valor"]
-                        .sum()
-                        .rename("Entradas")
-                    )
-                    df_sai = (
-                        df_base[df_base.get("Tipo") == "Saída"]
-                        .groupby("Categoria")["Valor"]
-                        .sum()
-                        .rename("Saídas")
-                    )
-                    df_cat_new = (
-                        pd.concat([df_ent, df_sai], axis=1)
-                        .fillna(0.0)
-                        .reset_index()
-                        .rename(columns={"index": "Categoria"})
-                    )
-
-                    # Lê todas as abas existentes e regrava substituindo Movimentos/Categorias
-                    if excel_buffer is None:
-                        raise RuntimeError("Não há um fechamento carregado para salvar.")
-
-                    excel_buffer.seek(0)
-                    dfs_all = pd.read_excel(excel_buffer, sheet_name=None)
-
-                    dfs_all["Movimentos"] = df_base
-                    dfs_all["Categorias"] = df_cat_new
-
-                    out = BytesIO()
-                    with pd.ExcelWriter(out, engine="openpyxl") as writer:
-                        # mantém ordem básica, se possível
-                        prefer_order = [
-                            "ResumoDados",
-                            "Resumo",
-                            "Categorias",
-                            "Movimentos",
-                            "Dinheiro",
-                        ]
-                        written = set()
-                        for sh in prefer_order:
-                            if sh in dfs_all:
-                                dfs_all[sh].to_excel(writer, sheet_name=sh, index=False)
-                                written.add(sh)
-                        for sh, dfsh in dfs_all.items():
-                            if sh in written:
-                                continue
-                            dfsh.to_excel(writer, sheet_name=sh, index=False)
-                    out.seek(0)
-
-                    save_monthly_fechamento_to_gdrive(ano_mes_ref, out)
-                    st.success(
-                        f"Fechamento de {ano_mes_ref} atualizado no Drive com as categorias ajustadas."
-                    )
-                    # atualiza cache local para as outras abas
-                    st.session_state["fechamento_cache_data"] = (out, {
-                        "resumo_dados": dfs_all.get("ResumoDados", pd.DataFrame()),
-                        "movimentos": df_base,
-                        "categorias": df_cat_new,
-                        "dinheiro": dfs_all.get("Dinheiro", pd.DataFrame()),
-                    })
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Erro ao salvar fechamento no Drive: {e}")
 
             st.markdown("</div>", unsafe_allow_html=True)
 
