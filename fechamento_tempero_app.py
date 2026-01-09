@@ -2044,6 +2044,17 @@ with tab1:
     # Mantém somente colunas esperadas
     df_dinheiro_periodo = df_dinheiro_periodo[["Data", "Descrição", "Tipo", "Valor"]]
 
+    # Sanitiza tipos para evitar erros do pyarrow no data_editor
+    df_dinheiro_periodo = df_dinheiro_periodo.copy()
+    if "Data" in df_dinheiro_periodo.columns:
+        df_dinheiro_periodo["Data"] = pd.to_datetime(df_dinheiro_periodo["Data"], errors="coerce").dt.date
+    if "Descrição" in df_dinheiro_periodo.columns:
+        df_dinheiro_periodo["Descrição"] = df_dinheiro_periodo["Descrição"].fillna("").astype(str)
+    if "Tipo" in df_dinheiro_periodo.columns:
+        df_dinheiro_periodo["Tipo"] = df_dinheiro_periodo["Tipo"].fillna("Entrada").astype(str)
+    if "Valor" in df_dinheiro_periodo.columns:
+        df_dinheiro_periodo["Valor"] = pd.to_numeric(df_dinheiro_periodo["Valor"], errors="coerce").fillna(0.0).astype(float)
+
     df_dinheiro_ui = st.data_editor(
         df_dinheiro_periodo,
         num_rows="dynamic",
