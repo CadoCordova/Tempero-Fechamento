@@ -1,4 +1,5 @@
 import math
+import re
 from collections import defaultdict
 from pathlib import Path
 from io import BytesIO
@@ -887,20 +888,21 @@ def delete_history_file(file_id: str):
 
 
 # ========================
-#  Livro-caixa de dinheiro no Drive (por mês)
+#  Livro-caixa de dinheiro no Drive
 # ========================
 
-def get_cash_file_name(periodo_ref: str):
-    """Nome do arquivo mensal do caixa em dinheiro no Drive.
+def get_cash_file_name():
+    return st.secrets.get("GDRIVE_CASH_FILE_NAME", "caixa_dinheiro.xlsx")
 
-    Ex.: caixa_dinheiro_2026-01.xlsx
+
+def get_cash_file_id(service, folder_id):
     """
-    return f"caixa_dinheiro_{periodo_ref}.xlsx"
-
-
-def get_cash_file_id(service, folder_id, filename: str):
-    """Procura um arquivo pelo nome dentro da pasta de históricos."""
-    query = f"'{folder_id}' in parents and name = '{filename}' and trashed = false"
+    Procura o arquivo de caixa de dinheiro dentro da pasta de históricos.
+    """
+    filename = get_cash_file_name()
+    query = (
+        f"'{folder_id}' in parents and name = '{filename}' and trashed = false"
+    )
     results = (
         service.files()
         .list(
@@ -912,19 +914,19 @@ def get_cash_file_id(service, folder_id, filename: str):
         .execute()
     )
     files = results.get("files", [])
-    return files[0]["id"] if files else None
+    if files:
+        return files[0]["id"]
+    return None
 
 
-def load_cash_from_gdrive(periodo_ref: str) -> pd.DataFrame:
-    """Lê o livro-caixa de dinheiro do mês (caixa_dinheiro_YYYY-MM.xlsx) no Drive.
-
+def load_cash_from_gdrive():
+    """
+    Lê o livro-caixa de dinheiro (caixa_dinheiro.xlsx) do Drive.
     Se não existir, retorna DataFrame vazio com colunas padrão.
     """
     service = get_gdrive_service()
     folder_id = get_history_folder_id(service)
-
-    filename = get_cash_file_name(periodo_ref)
-    file_id = get_cash_file_id(service, folder_id, filename)
+    file_id = get_cash_file_id(service, folder_id)
 
     if not file_id:
         return pd.DataFrame(columns=["Data", "Descrição", "Tipo", "Valor"])
@@ -934,30 +936,31 @@ def load_cash_from_gdrive(periodo_ref: str) -> pd.DataFrame:
     downloader = MediaIoBaseDownload(buf, request)
     done = False
     while not done:
-        _, done = downloader.next_chunk()
+        status, done = downloader.next_chunk()
     buf.seek(0)
 
     df = pd.read_excel(buf)
 
-    # Normaliza colunas e remove colunas "lixo" (ex.: Unnamed: 0 de índice antigo)
-    df.columns = [str(c).strip() for c in df.columns]
-    df = df.loc[:, ~df.columns.str.match(r"^Unnamed")].copy()
+    # Normaliza colunas
+    cols = [str(c).strip() for c in df.columns]
+    df.columns = cols
 
     for col in ["Data", "Descrição", "Tipo", "Valor"]:
         if col not in df.columns:
             df[col] = None
 
-    df = df[["Data", "Descrição", "Tipo", "Valor"]].copy()
+    df = df[["Data", "Descrição", "Tipo", "Valor"]]
     return df
 
 
-def save_cash_to_gdrive(periodo_ref: str, df: pd.DataFrame):
-    """Salva (ou atualiza) o livro-caixa de dinheiro do mês no Drive."""
+def save_cash_to_gdrive(df: pd.DataFrame):
+    """
+    Salva (ou atualiza) o livro-caixa de dinheiro no Drive.
+    """
     service = get_gdrive_service()
     folder_id = get_history_folder_id(service)
-
-    filename = get_cash_file_name(periodo_ref)
-    file_id = get_cash_file_id(service, folder_id, filename)
+    file_id = get_cash_file_id(service, folder_id)
+    filename = get_cash_file_name()
 
     buffer = BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
@@ -966,7 +969,9 @@ def save_cash_to_gdrive(periodo_ref: str, df: pd.DataFrame):
 
     media = MediaIoBaseUpload(
         buffer,
-        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        mimetype=(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ),
         resumable=False,
     )
 
@@ -1026,33 +1031,37 @@ st.sidebar.markdown(
 if st.session_state.get("auth_ok"):
     st.sidebar.markdown("---")
     st.sidebar.markdown(f"**Usuário:** {current_user()}  ")
-#    st.sidebar.markdown(f"**Perfil:** {current_role()}")
+    st.sidebar.markdown(f"**Perfil:** {current_role()}")
     if st.sidebar.button("Sair"):
         for k in ["auth_ok", "user", "role"]:
             st.session_state.pop(k, None)
         st.rerun()
 
 # ========================
-#  Carrega livro-caixa mensal de dinheiro (por mês cheio)
+#  Carrega livro-caixa global de dinheiro
 # ========================
 
-ano_mes_ref = get_ano_mes(nome_periodo) or datetime.today().strftime("%Y-%m")
-
-# Mantém em cache por mês para evitar leituras repetidas no Drive
-if (
-    "cash_period_ref" not in st.session_state
-    or st.session_state["cash_period_ref"] != ano_mes_ref
-):
-    st.session_state["cash_period_ref"] = ano_mes_ref
+if "df_caixa_global" not in st.session_state:
     try:
-        st.session_state["df_dinheiro_periodo"] = load_cash_from_gdrive(ano_mes_ref)
+        st.session_state["df_caixa_global"] = load_cash_from_gdrive()
     except Exception:
-        st.session_state["df_dinheiro_periodo"] = pd.DataFrame(
+        st.session_state["df_caixa_global"] = pd.DataFrame(
             columns=["Data", "Descrição", "Tipo", "Valor"]
         )
 
-df_dinheiro_periodo = st.session_state["df_dinheiro_periodo"].copy()
+df_caixa_global = st.session_state["df_caixa_global"].copy()
 
+ano_mes_ref = get_ano_mes(nome_periodo)
+
+# Filtra para o período (YYYY-MM) selecionado NA UI da aba Caixa Diário
+if not df_caixa_global.empty and ano_mes_ref:
+    datas = pd.to_datetime(df_caixa_global["Data"], errors="coerce")
+    mask = datas.dt.strftime("%Y-%m") == ano_mes_ref
+    df_dinheiro_periodo = df_caixa_global[mask].copy()
+else:
+    df_dinheiro_periodo = pd.DataFrame(
+        columns=["Data", "Descrição", "Tipo", "Valor"]
+    )
 
 # ========================
 #  Cálculos principais
@@ -1115,21 +1124,42 @@ if arquivo_itau and arquivo_pag:
             else:
                 meses_extratos = []
 
-            
+            # ----------------------------------------
+            # Trava de consistência do período (mês cheio)
+            # - Extratos devem conter APENAS 1 mês (YYYY-MM)
+            # - Se o Nome do período começar com YYYY-MM, ele deve bater com os extratos
+            # ----------------------------------------
+            if not meses_extratos:
+                raise RuntimeError(
+                    "Não consegui identificar datas válidas nos extratos. "
+                    "Verifique o arquivo exportado (coluna Data) e tente novamente."
+                )
 
+            if len(meses_extratos) != 1:
+                raise RuntimeError(
+                    "Extratos parecem conter múltiplos meses: "
+                    f"{', '.join(meses_extratos)}. "
+                    "Regra do sistema: sempre fechar mês cheio (um único YYYY-MM)."
+                )
 
-            # Para mês cheio: usa o caixa do mês selecionado (ano_mes_ref)
-            df_dinheiro_periodo_fechar = df_dinheiro_periodo.copy()
-            df_dinheiro_periodo_fechar.columns = [str(c).strip() for c in df_dinheiro_periodo_fechar.columns]
-            df_dinheiro_periodo_fechar = df_dinheiro_periodo_fechar.loc[:, ~df_dinheiro_periodo_fechar.columns.str.match(r"^Unnamed")].copy()
+            mes_extrato = meses_extratos[0]
+            if ano_mes_ref and mes_extrato != ano_mes_ref:
+                raise RuntimeError(
+                    f"Período selecionado: {ano_mes_ref}, mas os extratos são de: {mes_extrato}. "
+                    "Ajuste o Nome do período (iniciando com YYYY-MM) ou envie os extratos corretos."
+                )
 
-            for col in ["Data", "Descrição", "Tipo", "Valor"]:
-                if col not in df_dinheiro_periodo_fechar.columns:
-                    df_dinheiro_periodo_fechar[col] = None
+            # Filtra o livro-caixa global de dinheiro pelos mesmos meses
+            if not df_caixa_global.empty and meses_extratos:
+                datas_cash = pd.to_datetime(df_caixa_global["Data"], errors="coerce")
+                mask_cash = datas_cash.dt.strftime("%Y-%m").isin(meses_extratos)
+                df_dinheiro_periodo_fechar = df_caixa_global[mask_cash].copy()
+            else:
+                df_dinheiro_periodo_fechar = pd.DataFrame(
+                    columns=["Data", "Descrição", "Tipo", "Valor"]
+                )
 
-            df_dinheiro_periodo_fechar = df_dinheiro_periodo_fechar[["Data", "Descrição", "Tipo", "Valor"]].copy()
-
-# Totais de dinheiro para o(s) mesmo(s) mês(es) dos extratos
+            # Totais de dinheiro para o(s) mesmo(s) mês(es) dos extratos
             df_din_validos_calc = df_dinheiro_periodo_fechar.copy()
             if not df_din_validos_calc.empty and "Valor" in df_din_validos_calc.columns:
                 df_din_validos_calc = df_din_validos_calc[
@@ -1313,26 +1343,14 @@ if arquivo_itau and arquivo_pag:
 #  Abas (ordem: Caixa, Fechamento, Categorias, Histórico)
 # ========================
 
-# Monta as abas de acordo com o perfil do usuário
-tab_labels = ["💵 Caixa Diário"]
-is_admin = has_role("admin")   # usa a função já existente
-
-if is_admin:
-    tab_labels += [
+tab1, tab2, tab3, tab4 = st.tabs(
+    [
+        "💵 Caixa Diário",
         "💗 Fechamento Mensal",
         "🧾 Conferência & Categorias",
         "📊 Histórico & Comparativos",
     ]
-
-tabs = st.tabs(tab_labels)
-
-# Sempre existe a aba 1 (Caixa Diário)
-tab1 = tabs[0]
-
-# Só existem as outras abas se for admin
-tab2 = tab3 = tab4 = None
-if is_admin:
-    tab2, tab3, tab4 = tabs[1], tabs[2], tabs[3]
+)
 
 
 # ---------- ABA 1: Caixa Diário ----------
@@ -1363,9 +1381,6 @@ with tab1:
             columns=["Data", "Descrição", "Tipo", "Valor"],
         )
 
-    # Garante índice limpo (evita aparecer contagem antiga do Excel)
-    df_dinheiro_periodo = df_dinheiro_periodo.reset_index(drop=True)
-
     df_dinheiro_ui = st.data_editor(
         df_dinheiro_periodo,
         num_rows="dynamic",
@@ -1393,20 +1408,44 @@ with tab1:
                 & (df_din_limpo["Descrição"].fillna("").str.strip() == "")
             )
         ]
-        df_din_limpo = df_din_limpo.reset_index(drop=True)
 
     col_btn1, col_btn2 = st.columns([1, 3])
     with col_btn1:
         salvar_caixa = st.button("Salvar lançamentos de dinheiro")
 
+    if salvar_caixa:
+        try:
+            df_global = df_caixa_global.copy()
 
-    # Totais do mês (caixa) — exibição sempre visível
+            if ano_mes_ref:
+                datas = pd.to_datetime(df_global["Data"], errors="coerce")
+                mask = datas.dt.strftime("%Y-%m") == ano_mes_ref
+                df_outros_meses = df_global[~mask]
+            else:
+                df_outros_meses = df_global.iloc[0:0]
+
+            df_novo_global = pd.concat(
+                [df_outros_meses, df_din_limpo], ignore_index=True
+            )
+
+            st.session_state["df_caixa_global"] = df_novo_global
+            save_cash_to_gdrive(df_novo_global)
+            st.success("Lançamentos de dinheiro salvos com sucesso no Google Drive!")
+            st.rerun()
+        except Exception as e:
+            st.error(f"Erro ao salvar caixa diário no Drive: {e}")
+
+    # Totais do mês (caixa) apenas para exibição na aba
     df_din_calc = df_din_limpo.copy()
     if not df_din_calc.empty and "Valor" in df_din_calc.columns:
-        df_din_calc = df_din_calc[df_din_calc["Valor"].fillna(0) > 0]
+        df_din_calc = df_din_calc[df_din_calc["Valor"] > 0]
 
-    entradas_d = df_din_calc.loc[df_din_calc["Tipo"] == "Entrada", "Valor"].sum()
-    saidas_d = df_din_calc.loc[df_din_calc["Tipo"] == "Saída", "Valor"].sum()
+    entradas_d = df_din_calc.loc[
+        df_din_calc["Tipo"] == "Entrada", "Valor"
+    ].sum()
+    saidas_d = df_din_calc.loc[
+        df_din_calc["Tipo"] == "Saída", "Valor"
+    ].sum()
     saldo_d = entradas_d - saidas_d
 
     st.markdown("---")
@@ -1422,404 +1461,441 @@ with tab1:
         st.write("Saldo do dinheiro no período:", format_currency(saldo_d))
 
 
-    if salvar_caixa:
-        try:
-            df_to_save = df_din_limpo.reset_index(drop=True).copy()
-
-            # Atualiza cache do mês e salva no Drive (arquivo mensal)
-            st.session_state["df_dinheiro_periodo"] = df_to_save
-            st.session_state["cash_period_ref"] = ano_mes_ref
-
-            save_cash_to_gdrive(ano_mes_ref, df_to_save)
-            st.success(f"Caixa de {ano_mes_ref} salvo com sucesso no Google Drive!")
-            st.rerun()
-        except Exception as e:
-            st.error(f"Erro ao salvar caixa diário no Drive: {e}")
-
-
 # ---------- ABA 2: Fechamento Mensal ----------
 
-if tab2 is not None:
-    with tab2:
-        require_role("admin")  # só admin (ricardo, lizi)
+with tab2:
+    require_role("admin")  # só admin (ricardo, lizi)
 
+    st.markdown(
+        '<div class="tempero-section-title">Resumo do período</div>',
+        unsafe_allow_html=True,
+    )
+
+    if mensagem_erro:
+        st.error(mensagem_erro)
+    elif not dados_carregados:
+        st.info(
+            "Envie os arquivos do Itaú e PagSeguro na barra lateral para ver o fechamento."
+        )
+    else:
+        m1, m2, m3 = st.columns(3)
+        with m1:
+            st.markdown(
+                f"""
+                <div class="tempero-metric-card">
+                  <div class="tempero-metric-label">Entradas totais</div>
+                  <div class="tempero-metric-value">{format_currency(entradas_totais)}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+        with m2:
+            st.markdown(
+                f"""
+                <div class="tempero-metric-card">
+                  <div class="tempero-metric-label">Saídas totais</div>
+                  <div class="tempero-metric-value">{format_currency(saidas_totais)}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+        with m3:
+            st.markdown(
+                f"""
+                <div class="tempero-metric-card">
+                  <div class="tempero-metric-label">Resultado do período</div>
+                  <div class="tempero-metric-value">{format_currency(resultado_consolidado)}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+        st.markdown("---")
+
+        # Resumo por conta
         st.markdown(
-            '<div class="tempero-section-title">Resumo do período</div>',
+            '<div class="tempero-section-title">📑 Resumo por conta</div>',
             unsafe_allow_html=True,
         )
+        with st.container():
+            col_a, col_b, col_c = st.columns(3)
+            with col_a:
+                st.markdown('<div class="tempero-card">', unsafe_allow_html=True)
+                st.markdown("**Itaú**")
+                st.write("Entradas:", format_currency(ent_itau))
+                st.write("Saídas  :", format_currency(sai_itau))
+                st.write("Resultado:", format_currency(res_itau))
+                st.markdown("</div>", unsafe_allow_html=True)
 
-        if mensagem_erro:
-            st.error(mensagem_erro)
-        elif not dados_carregados:
-            st.info(
-                "Envie os arquivos do Itaú e PagSeguro na barra lateral para ver o fechamento."
-            )
-        else:
-            m1, m2, m3 = st.columns(3)
-            with m1:
-                st.markdown(
-                    f"""
-                    <div class="tempero-metric-card">
-                      <div class="tempero-metric-label">Entradas totais</div>
-                      <div class="tempero-metric-value">{format_currency(entradas_totais)}</div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
+            with col_b:
+                st.markdown('<div class="tempero-card">', unsafe_allow_html=True)
+                st.markdown("**PagSeguro**")
+                st.write("Entradas:", format_currency(ent_pag))
+                st.write("Saídas  :", format_currency(sai_pag))
+                st.write("Resultado:", format_currency(res_pag))
+                st.markdown("</div>", unsafe_allow_html=True)
+
+            with col_c:
+                st.markdown('<div class="tempero-card">', unsafe_allow_html=True)
+                st.markdown("**Dinheiro (caixa físico)**")
+                st.write("Entradas:", format_currency(entradas_dinheiro_periodo))
+                st.write(
+                    "Saídas  :",
+                    format_currency(-saidas_dinheiro_periodo)
+                    if saidas_dinheiro_periodo
+                    else "R$ 0,00",
                 )
-            with m2:
-                st.markdown(
-                    f"""
-                    <div class="tempero-metric-card">
-                      <div class="tempero-metric-label">Saídas totais</div>
-                      <div class="tempero-metric-value">{format_currency(saidas_totais)}</div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
+                st.write("Resultado:", format_currency(saldo_dinheiro_periodo))
+                st.caption("Edite os lançamentos na aba 💵 Caixa Diário.")
+                st.markdown("</div>", unsafe_allow_html=True)
+
+        st.markdown("---")
+
+        # Consolidado
+        st.markdown(
+            '<div class="tempero-section-title">🏁 Consolidado da loja</div>',
+            unsafe_allow_html=True,
+        )
+        st.markdown('<div class="tempero-card">', unsafe_allow_html=True)
+        st.write("Saldo inicial:", format_currency(saldo_inicial))
+        st.write("Saldo final  :", format_currency(saldo_final))
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        # Resumo por categoria
+        st.markdown(
+            '<div class="tempero-section-title">📌 Resumo por categoria</div>',
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            '<div class="tempero-section-sub">Baseado nas categorias atuais (já considera regras salvas anteriormente).</div>',
+            unsafe_allow_html=True,
+        )
+        df_cat_display = df_cat_export.copy()
+        if not df_cat_display.empty:
+            df_cat_display["Entradas"] = df_cat_display["Entradas"].map(format_currency)
+            df_cat_display["Saídas"] = df_cat_display["Saídas"].map(format_currency)
+        st.dataframe(df_cat_display, use_container_width=True)
+
+        # Relatório
+        st.markdown(
+            '<div class="tempero-section-title">📥 Relatório do período atual</div>',
+            unsafe_allow_html=True,
+        )
+        st.markdown('<div class="tempero-card">', unsafe_allow_html=True)
+        col_dl1, col_dl2 = st.columns(2)
+        with col_dl1:
+            st.download_button(
+                label="Baixar relatório Excel (período atual)",
+                data=excel_buffer,
+                file_name="fechamento_tempero.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+
+        with col_dl2:
+            salvar = st.button("Salvar no histórico")
+
+        if salvar:
+            slug = slugify(nome_periodo)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"fechamento_tempero_{slug}_{timestamp}.xlsx"
+            try:
+                upload_history_to_gdrive(excel_buffer, filename)
+                st.success(
+                    f"Relatório salvo no histórico (Google Drive) como: {filename}"
                 )
-            with m3:
-                st.markdown(
-                    f"""
-                    <div class="tempero-metric-card">
-                      <div class="tempero-metric-label">Resultado do período</div>
-                      <div class="tempero-metric-value">{format_currency(resultado_consolidado)}</div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
-
-            st.markdown("---")
-
-            # Resumo por conta
-            st.markdown(
-                '<div class="tempero-section-title">📑 Resumo por conta</div>',
-                unsafe_allow_html=True,
-            )
-            with st.container():
-                col_a, col_b, col_c = st.columns(3)
-                with col_a:
-                    st.markdown('<div class="tempero-card">', unsafe_allow_html=True)
-                    st.markdown("**Itaú**")
-                    st.write("Entradas:", format_currency(ent_itau))
-                    st.write("Saídas  :", format_currency(sai_itau))
-                    st.write("Resultado:", format_currency(res_itau))
-                    st.markdown("</div>", unsafe_allow_html=True)
-
-                with col_b:
-                    st.markdown('<div class="tempero-card">', unsafe_allow_html=True)
-                    st.markdown("**PagSeguro**")
-                    st.write("Entradas:", format_currency(ent_pag))
-                    st.write("Saídas  :", format_currency(sai_pag))
-                    st.write("Resultado:", format_currency(res_pag))
-                    st.markdown("</div>", unsafe_allow_html=True)
-
-                with col_c:
-                    st.markdown('<div class="tempero-card">', unsafe_allow_html=True)
-                    st.markdown("**Dinheiro (caixa físico)**")
-                    st.write("Entradas:", format_currency(entradas_dinheiro_periodo))
-                    st.write(
-                        "Saídas  :",
-                        format_currency(-saidas_dinheiro_periodo)
-                        if saidas_dinheiro_periodo
-                        else "R$ 0,00",
-                    )
-                    st.write("Resultado:", format_currency(saldo_dinheiro_periodo))
-                    st.caption("Edite os lançamentos na aba 💵 Caixa Diário.")
-                    st.markdown("</div>", unsafe_allow_html=True)
-
-            st.markdown("---")
-
-            # Consolidado
-            st.markdown(
-                '<div class="tempero-section-title">🏁 Consolidado da loja</div>',
-                unsafe_allow_html=True,
-            )
-            st.markdown('<div class="tempero-card">', unsafe_allow_html=True)
-            st.write("Saldo inicial:", format_currency(saldo_inicial))
-            st.write("Saldo final  :", format_currency(saldo_final))
-            st.markdown("</div>", unsafe_allow_html=True)
-
-            # Resumo por categoria
-            st.markdown(
-                '<div class="tempero-section-title">📌 Resumo por categoria</div>',
-                unsafe_allow_html=True,
-            )
-            st.markdown(
-                '<div class="tempero-section-sub">Baseado nas categorias atuais (já considera regras salvas anteriormente).</div>',
-                unsafe_allow_html=True,
-            )
-            df_cat_display = df_cat_export.copy()
-            if not df_cat_display.empty:
-                df_cat_display["Entradas"] = df_cat_display["Entradas"].map(format_currency)
-                df_cat_display["Saídas"] = df_cat_display["Saídas"].map(format_currency)
-            st.dataframe(df_cat_display, use_container_width=True)
-
-            # Relatório
-            st.markdown(
-                '<div class="tempero-section-title">📥 Relatório do período atual</div>',
-                unsafe_allow_html=True,
-            )
-            st.markdown('<div class="tempero-card">', unsafe_allow_html=True)
-            col_dl1, col_dl2 = st.columns(2)
-            with col_dl1:
-                st.download_button(
-                    label="Baixar relatório Excel (período atual)",
-                    data=excel_buffer,
-                    file_name="fechamento_tempero.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                )
-
-            with col_dl2:
-                salvar = st.button("Salvar no histórico")
-
-            if salvar:
-                slug = slugify(nome_periodo)
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                filename = f"fechamento_tempero_{slug}_{timestamp}.xlsx"
-                try:
-                    upload_history_to_gdrive(excel_buffer, filename)
-                    st.success(
-                        f"Relatório salvo no histórico (Google Drive) como: {filename}"
-                    )
-                except Exception as e:
-                    st.error(f"Erro ao salvar no Google Drive: {e}")
-            st.markdown("</div>", unsafe_allow_html=True)
+            except Exception as e:
+                st.error(f"Erro ao salvar no Google Drive: {e}")
+        st.markdown("</div>", unsafe_allow_html=True)
 
 
 # ---------- ABA 3: Conferência & Categorias ----------
 
-if tab3 is not None:
-    with tab3:
-        require_role("admin")  # só admin (ricardo, lizi)
+with tab3:
+    require_role("admin")  # só admin (ricardo, lizi)
 
+    st.markdown(
+        '<div class="tempero-section-title">🧾 Conferência de lançamentos e categorias</div>',
+        unsafe_allow_html=True,
+    )
+
+    if not dados_carregados:
+        st.info(
+            "Envie os arquivos do Itaú e PagSeguro na barra lateral para conferir as categorias."
+        )
+    else:
+        st.markdown('<div class="tempero-card">', unsafe_allow_html=True)
+        st.markdown("**Gerenciar categorias**")
+
+        categorias_padrao = [
+            "Vendas / Receitas",
+            "Fornecedores e Insumos",
+            "Folha de Pagamento",
+            "Aluguel Comercial",
+            "Contabilidade e RH",
+            "Dedetização / Controle de Pragas",
+            "Energia Elétrica",
+            "Motoboy / Entregas",
+            "Nutricionista",
+            "Impostos e Encargos",
+            "Investimentos (Aplicações)",
+            "Rendimentos de Aplicações",
+            "Fatura Cartão",
+            "Transferência Interna / Sócios",
+            "A Classificar",
+        ]
+
+        categorias_custom = carregar_categorias_personalizadas()
+        categorias_possiveis = categorias_padrao + categorias_custom
+
+        col_nc1, col_nc2 = st.columns([2, 1])
+        with col_nc1:
+            nova_cat = st.text_input("Criar nova categoria:")
+        with col_nc2:
+            if st.button("Adicionar categoria"):
+                if nova_cat.strip() != "":
+                    if nova_cat not in categorias_possiveis:
+                        categorias_custom.append(nova_cat)
+                        salvar_categorias_personalizadas(categorias_custom)
+                        st.success(f"Categoria '{nova_cat}' criada com sucesso!")
+                        st.rerun()
+                    else:
+                        st.warning("Essa categoria já existe.")
+
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        st.markdown('<div class="tempero-card">', unsafe_allow_html=True)
+        st.markdown("**Conferência de lançamentos**")
         st.markdown(
-            '<div class="tempero-section-title">🧾 Conferência de lançamentos e categorias</div>',
+            '<div class="tempero-section-sub">Ajuste as categorias linha a linha, se necessário. '
+            "Ao salvar as regras, o sistema aprende para os próximos fechamentos.</div>",
             unsafe_allow_html=True,
         )
 
-        if not dados_carregados:
-            st.info(
-                "Envie os arquivos do Itaú e PagSeguro na barra lateral para conferir as categorias."
-            )
-        else:
-            st.markdown('<div class="tempero-card">', unsafe_allow_html=True)
-            st.markdown("**Gerenciar categorias**")
-
-            categorias_padrao = [
-                "Vendas / Receitas",
-                "Fornecedores e Insumos",
-                "Folha de Pagamento",
-                "Aluguel Comercial",
-                "Contabilidade e RH",
-                "Dedetização / Controle de Pragas",
-                "Energia Elétrica",
-                "Motoboy / Entregas",
-                "Nutricionista",
-                "Impostos e Encargos",
-                "Investimentos (Aplicações)",
-                "Rendimentos de Aplicações",
-                "Fatura Cartão",
-                "Transferência Interna / Sócios",
-                "A Classificar",
-            ]
-
-            categorias_custom = carregar_categorias_personalizadas()
-            categorias_possiveis = categorias_padrao + categorias_custom
-
-            col_nc1, col_nc2 = st.columns([2, 1])
-            with col_nc1:
-                nova_cat = st.text_input("Criar nova categoria:")
-            with col_nc2:
-                if st.button("Adicionar categoria"):
-                    if nova_cat.strip() != "":
-                        if nova_cat not in categorias_possiveis:
-                            categorias_custom.append(nova_cat)
-                            salvar_categorias_personalizadas(categorias_custom)
-                            st.success(f"Categoria '{nova_cat}' criada com sucesso!")
-                            st.rerun()
-                        else:
-                            st.warning("Essa categoria já existe.")
-
-            st.markdown("</div>", unsafe_allow_html=True)
-
-            st.markdown('<div class="tempero-card">', unsafe_allow_html=True)
-            st.markdown("**Conferência de lançamentos**")
-            st.markdown(
-                '<div class="tempero-section-sub">Ajuste as categorias linha a linha, se necessário. '
-                "Ao salvar as regras, o sistema aprende para os próximos fechamentos.</div>",
-                unsafe_allow_html=True,
-            )
-
-            edited_df = st.data_editor(
-                df_mov,
-                key="editor_movimentos",
-                use_container_width=True,
-                num_rows="fixed",
-                column_config={
-                    "Categoria": st.column_config.SelectboxColumn(
-                        "Categoria",
-                        options=categorias_possiveis,
-                        help="Ajuste a categoria se necessário.",
-                    )
-                },
-            )
-
-            if st.button("Salvar regras de categorização"):
-                regras = carregar_regras()
-                alteracoes = 0
-                for _, row in edited_df.iterrows():
-                    desc = row.get("Descrição")
-                    cat = row.get("Categoria")
-                    if not desc or not cat:
-                        continue
-                    desc_norm = normalizar_texto(desc)
-                    if regras.get(desc_norm) != cat:
-                        regras[desc_norm] = cat
-                        alteracoes += 1
-                salvar_regras(regras)
-                st.success(
-                    f"{alteracoes} regra(s) de categorização salva(s). "
-                    "Os próximos fechamentos já virão com essas categorias aplicadas."
+        edited_df = st.data_editor(
+            df_mov,
+            key="editor_movimentos",
+            use_container_width=True,
+            num_rows="fixed",
+            column_config={
+                "Categoria": st.column_config.SelectboxColumn(
+                    "Categoria",
+                    options=categorias_possiveis,
+                    help="Ajuste a categoria se necessário.",
                 )
-                st.rerun()
+            },
+        )
 
-            st.markdown("</div>", unsafe_allow_html=True)
+        if st.button("Salvar regras de categorização"):
+            regras = carregar_regras()
+            alteracoes = 0
+            for _, row in edited_df.iterrows():
+                desc = row.get("Descrição")
+                cat = row.get("Categoria")
+                if not desc or not cat:
+                    continue
+                desc_norm = normalizar_texto(desc)
+                if regras.get(desc_norm) != cat:
+                    regras[desc_norm] = cat
+                    alteracoes += 1
+            salvar_regras(regras)
+            st.success(
+                f"{alteracoes} regra(s) de categorização salva(s). "
+                "Os próximos fechamentos já virão com essas categorias aplicadas."
+            )
+            st.rerun()
+
+        st.markdown("</div>", unsafe_allow_html=True)
 
 
 # ---------- ABA 4: Histórico & Comparativos ----------
 
-if tab4 is not None:
-    with tab4:
-        require_role("admin")  # só admin (ricardo, lizi)
+with tab4:
+    require_role("admin")  # só admin (ricardo, lizi)
+    st.markdown(
+        '<div class="tempero-section-title">📊 Histórico de fechamentos e comparativo</div>',
+        unsafe_allow_html=True,
+    )
 
+    try:
+        arquivos = list_history_from_gdrive()
+    except Exception as e:
+        st.error(f"Erro ao acessar Google Drive: {e}")
+        arquivos = []
+
+    if not arquivos:
+        st.write("Nenhum fechamento salvo ainda.")
+    else:
+        st.markdown("**Comparativo entre períodos (Histórico Analítico)**")
         st.markdown(
-            '<div class="tempero-section-title">📊 Histórico de fechamentos e comparativo</div>',
+            '<div class="tempero-section-sub">Baseado nos relatórios salvos no histórico (Google Drive).</div>',
             unsafe_allow_html=True,
         )
 
-        try:
-            arquivos = list_history_from_gdrive()
-        except Exception as e:
-            st.error(f"Erro ao acessar Google Drive: {e}")
-            arquivos = []
+        resumos = []
+        for file_info in arquivos:
+            file_id = file_info["id"]
+            nome = file_info["name"]
 
-        if not arquivos:
-            st.write("Nenhum fechamento salvo ainda.")
-        else:
-            st.markdown("**Comparativo entre períodos (Histórico Analítico)**")
-            st.markdown(
-                '<div class="tempero-section-sub">Baseado nos relatórios salvos no histórico (Google Drive).</div>',
-                unsafe_allow_html=True,
+            try:
+                buf = download_history_file(file_id)
+
+                try:
+                    df_consol = pd.read_excel(buf, sheet_name="ResumoDados")
+                except Exception:
+                    buf.seek(0)
+                    df_res = pd.read_excel(buf, sheet_name="Resumo")
+                    if "Nome do período" not in df_res.columns:
+                        continue
+                    df_consol = df_res[df_res["Nome do período"].notna()]
+                    if df_consol.empty:
+                        continue
+
+                linha = df_consol.iloc[0]
+                periodo = str(linha.get("Nome do período", nome))
+                entradas = float(linha.get("Entradas totais", 0.0))
+                saidas = float(linha.get("Saídas totais", 0.0))
+                resultado = float(linha.get("Resultado do período", 0.0))
+                saldo_final_val = linha.get("Saldo final", None)
+                saldo_final_hist = (
+                    float(saldo_final_val) if saldo_final_val is not None else None
+                )
+
+                resumos.append(
+                    {
+                        "Período": periodo,
+                        "Entradas": entradas,
+                        "Saídas": saidas,
+                        "Resultado": resultado,
+                        "Saldo final": saldo_final_hist,
+                    }
+                )
+            except Exception:
+                continue
+
+        if not resumos:
+            st.info(
+                "Ainda não foi possível montar o comparativo. "
+                "Gere e salve alguns fechamentos no novo formato."
             )
+        else:
+            df_hist = pd.DataFrame(resumos)
+            df_hist = df_hist.iloc[::-1].reset_index(drop=True)
 
-            resumos = []
-            for file_info in arquivos:
-                file_id = file_info["id"]
-                nome = file_info["name"]
+            df_display = df_hist.copy()
+            for col in ["Entradas", "Saídas", "Resultado", "Saldo final"]:
+                if col in df_display.columns:
+                    df_display[col] = df_display[col].apply(
+                        lambda x: format_currency(x) if pd.notna(x) else "-"
+                    )
 
+            st.dataframe(df_display, use_container_width=True)
+
+            st.markdown("**Resultado por período:**")
+
+            # Ordena cronologicamente para o gráfico (evita meses embaralhados)
+            df_chart = df_hist.copy()
+
+            meses_pt = {
+                "janeiro": 1,
+                "fevereiro": 2,
+                "março": 3,
+                "marco": 3,
+                "abril": 4,
+                "maio": 5,
+                "junho": 6,
+                "julho": 7,
+                "agosto": 8,
+                "setembro": 9,
+                "outubro": 10,
+                "novembro": 11,
+                "dezembro": 12,
+            }
+
+            def _periodo_to_dt(periodo):
+                if periodo is None:
+                    return pd.NaT
+                s = str(periodo).strip().lower()
+
+                # 1) tenta YYYY-MM em qualquer lugar do texto
+                m = re.search(r"(\d{4})-(\d{2})", s)
+                if m:
+                    y, mm = int(m.group(1)), int(m.group(2))
+                    if 1 <= mm <= 12:
+                        return pd.Timestamp(y, mm, 1)
+
+                # 2) tenta "Mês YYYY" (ex.: "Junho 2025")
+                for nome_mes, num_mes in meses_pt.items():
+                    if s.startswith(nome_mes):
+                        y = re.search(r"(\d{4})", s)
+                        if y:
+                            return pd.Timestamp(int(y.group(1)), num_mes, 1)
+
+                # 3) tenta MM/YYYY
+                m2 = re.search(r"(\d{2})/(\d{4})", s)
+                if m2:
+                    mm, y = int(m2.group(1)), int(m2.group(2))
+                    if 1 <= mm <= 12:
+                        return pd.Timestamp(y, mm, 1)
+
+                return pd.NaT
+
+            df_chart["ordem"] = df_chart["Período"].apply(_periodo_to_dt)
+
+            if df_chart["ordem"].notna().any():
+                df_chart = df_chart.dropna(subset=["ordem"]).sort_values("ordem")
+                chart_df = df_chart.set_index("Período")[["Resultado"]]
+            else:
+                # fallback: mantém a ordem original se não conseguir parsear
+                chart_df = df_hist.set_index("Período")[["Resultado"]]
+
+            st.bar_chart(chart_df)
+
+        st.markdown("---")
+
+        st.markdown("**Fechamentos salvos**")
+        st.markdown('<div class="tempero-card">', unsafe_allow_html=True)
+
+        for file_info in arquivos:
+            file_id = file_info["id"]
+            nome = file_info["name"]
+            mod_raw = file_info.get("modifiedTime")
+
+            try:
+                dt = datetime.fromisoformat(mod_raw.replace("Z", "+00:00"))
+                data_mod = dt.strftime("%Y-%m-%d %H:%M")
+            except Exception:
+                data_mod = mod_raw
+
+            col_a, col_b, col_c = st.columns([5, 1, 1])
+
+            with col_a:
+                st.write(f"📄 **{nome}**")
+                st.caption(f"salvo em {data_mod}")
+
+            with col_b:
                 try:
                     buf = download_history_file(file_id)
-
-                    try:
-                        df_consol = pd.read_excel(buf, sheet_name="ResumoDados")
-                    except Exception:
-                        buf.seek(0)
-                        df_res = pd.read_excel(buf, sheet_name="Resumo")
-                        if "Nome do período" not in df_res.columns:
-                            continue
-                        df_consol = df_res[df_res["Nome do período"].notna()]
-                        if df_consol.empty:
-                            continue
-
-                    linha = df_consol.iloc[0]
-                    periodo = str(linha.get("Nome do período", nome))
-                    entradas = float(linha.get("Entradas totais", 0.0))
-                    saidas = float(linha.get("Saídas totais", 0.0))
-                    resultado = float(linha.get("Resultado do período", 0.0))
-                    saldo_final_val = linha.get("Saldo final", None)
-                    saldo_final_hist = (
-                        float(saldo_final_val) if saldo_final_val is not None else None
+                    data_bin = buf.getvalue()
+                    st.download_button(
+                        label="Baixar",
+                        data=data_bin,
+                        file_name=nome,
+                        mime=(
+                            "application/vnd.openxmlformats-officedocument."
+                            "spreadsheetml.sheet"
+                        ),
+                        key=f"baixar_{file_id}",
                     )
+                except Exception as e:
+                    st.error(f"Erro ao baixar {nome}: {e}")
 
-                    resumos.append(
-                        {
-                            "Período": periodo,
-                            "Entradas": entradas,
-                            "Saídas": saidas,
-                            "Resultado": resultado,
-                            "Saldo final": saldo_final_hist,
-                        }
-                    )
-                except Exception:
-                    continue
-
-            if not resumos:
-                st.info(
-                    "Ainda não foi possível montar o comparativo. "
-                    "Gere e salve alguns fechamentos no novo formato."
-                )
-            else:
-                df_hist = pd.DataFrame(resumos)
-                df_hist = df_hist.iloc[::-1].reset_index(drop=True)
-
-                df_display = df_hist.copy()
-                for col in ["Entradas", "Saídas", "Resultado", "Saldo final"]:
-                    if col in df_display.columns:
-                        df_display[col] = df_display[col].apply(
-                            lambda x: format_currency(x) if pd.notna(x) else "-"
-                        )
-
-                st.dataframe(df_display, use_container_width=True)
-
-                st.markdown("**Resultado por período:**")
-                chart_df = df_hist.set_index("Período")[["Resultado"]]
-                st.bar_chart(chart_df)
-
-            st.markdown("---")
-
-            st.markdown("**Fechamentos salvos**")
-            st.markdown('<div class="tempero-card">', unsafe_allow_html=True)
-
-            for file_info in arquivos:
-                file_id = file_info["id"]
-                nome = file_info["name"]
-                mod_raw = file_info.get("modifiedTime")
-
-                try:
-                    dt = datetime.fromisoformat(mod_raw.replace("Z", "+00:00"))
-                    data_mod = dt.strftime("%Y-%m-%d %H:%M")
-                except Exception:
-                    data_mod = mod_raw
-
-                col_a, col_b, col_c = st.columns([5, 1, 1])
-
-                with col_a:
-                    st.write(f"📄 **{nome}**")
-                    st.caption(f"salvo em {data_mod}")
-
-                with col_b:
+            with col_c:
+                if st.button("Excluir", key=f"excluir_{file_id}"):
                     try:
-                        buf = download_history_file(file_id)
-                        data_bin = buf.getvalue()
-                        st.download_button(
-                            label="Baixar",
-                            data=data_bin,
-                            file_name=nome,
-                            mime=(
-                                "application/vnd.openxmlformats-officedocument."
-                                "spreadsheetml.sheet"
-                            ),
-                            key=f"baixar_{file_id}",
-                        )
+                        delete_history_file(file_id)
+                        st.success(f"Arquivo **{nome}** excluído com sucesso!")
+                        st.rerun()
                     except Exception as e:
-                        st.error(f"Erro ao baixar {nome}: {e}")
+                        st.error(f"Erro ao excluir {nome}: {e}")
 
-                with col_c:
-                    if st.button("Excluir", key=f"excluir_{file_id}"):
-                        try:
-                            delete_history_file(file_id)
-                            st.success(f"Arquivo **{nome}** excluído com sucesso!")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Erro ao excluir {nome}: {e}")
-
-            st.markdown("</div>", unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
