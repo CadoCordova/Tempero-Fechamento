@@ -8,6 +8,7 @@ import json
 
 import pandas as pd
 import streamlit as st
+import altair as alt
 
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
@@ -1736,6 +1737,11 @@ with tab4:
             file_id = file_info["id"]
             nome = file_info["name"]
 
+            # Comparativo: considerar APENAS relatórios de fechamento (bancos).
+            # Arquivos de caixa em dinheiro (caixa_dinheiro_YYYY-MM.xlsx) ficam apenas para listar/baixar.
+            if not str(nome).startswith("fechamento_tempero_"):
+                continue
+
             try:
                 buf = download_history_file(file_id)
 
@@ -1792,7 +1798,9 @@ with tab4:
 
             st.markdown("**Resultado por período:**")
 
-            # Ordena cronologicamente para o gráfico (evita meses embaralhados)
+            # Ordena cronologicamente para o gráfico (evita meses embaralhados).
+            # Observação: st.bar_chart tende a reordenar categorias; aqui usamos Altair
+            # com sort explícito para garantir a ordem correta no eixo X.
             df_chart = df_hist.copy()
 
             meses_pt = {
@@ -1843,12 +1851,21 @@ with tab4:
 
             if df_chart["ordem"].notna().any():
                 df_chart = df_chart.dropna(subset=["ordem"]).sort_values("ordem")
-                chart_df = df_chart.set_index("Período")[["Resultado"]]
+                period_order = df_chart["Período"].tolist()
             else:
                 # fallback: mantém a ordem original se não conseguir parsear
-                chart_df = df_hist.set_index("Período")[["Resultado"]]
+                period_order = df_hist["Período"].tolist()
 
-            st.bar_chart(chart_df)
+            base = alt.Chart(df_chart).mark_bar().encode(
+                x=alt.X("Período:N", sort=period_order, title=None),
+                y=alt.Y("Resultado:Q", title=None),
+                tooltip=[
+                    alt.Tooltip("Período:N"),
+                    alt.Tooltip("Resultado:Q", format=",.2f"),
+                ],
+            ).properties(height=320)
+
+            st.altair_chart(base, use_container_width=True)
 
         st.markdown("---")
 
