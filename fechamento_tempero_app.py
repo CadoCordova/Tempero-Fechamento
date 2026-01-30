@@ -889,18 +889,24 @@ def delete_history_file(file_id: str):
 
 
 # ========================
-#  Livro-caixa de dinheiro no Drive
+#  Livro-caixa de dinheiro no Drive (1 arquivo por mês)
 # ========================
 
-def get_cash_file_name():
-    return st.secrets.get("GDRIVE_CASH_FILE_NAME", "caixa_dinheiro.xlsx")
+def get_cash_file_name(ano_mes_ref: str | None):
+    """Nome do arquivo mensal do caixa.
+
+    Regra do sistema (v1 estável): 1 arquivo por mês no Drive.
+    Ex.: caixa_dinheiro_2026-01.xlsx
+    """
+    if not ano_mes_ref:
+        # fallback super defensivo (não deveria acontecer)
+        return "caixa_dinheiro_sem_periodo.xlsx"
+    return f"caixa_dinheiro_{ano_mes_ref}.xlsx"
 
 
-def get_cash_file_id(service, folder_id):
-    """
-    Procura o arquivo de caixa de dinheiro dentro da pasta de históricos.
-    """
-    filename = get_cash_file_name()
+def get_cash_file_id(service, folder_id, ano_mes_ref: str | None):
+    """Procura o arquivo mensal do caixa dentro da pasta de históricos."""
+    filename = get_cash_file_name(ano_mes_ref)
     query = (
         f"'{folder_id}' in parents and name = '{filename}' and trashed = false"
     )
@@ -920,14 +926,14 @@ def get_cash_file_id(service, folder_id):
     return None
 
 
-def load_cash_from_gdrive():
-    """
-    Lê o livro-caixa de dinheiro (caixa_dinheiro.xlsx) do Drive.
+def load_cash_from_gdrive(ano_mes_ref: str | None):
+    """Lê o livro-caixa de dinheiro do mês (caixa_dinheiro_YYYY-MM.xlsx).
+
     Se não existir, retorna DataFrame vazio com colunas padrão.
     """
     service = get_gdrive_service()
     folder_id = get_history_folder_id(service)
-    file_id = get_cash_file_id(service, folder_id)
+    file_id = get_cash_file_id(service, folder_id, ano_mes_ref)
 
     if not file_id:
         return pd.DataFrame(columns=["Data", "Descrição", "Tipo", "Valor"])
@@ -954,14 +960,12 @@ def load_cash_from_gdrive():
     return df
 
 
-def save_cash_to_gdrive(df: pd.DataFrame):
-    """
-    Salva (ou atualiza) o livro-caixa de dinheiro no Drive.
-    """
+def save_cash_to_gdrive(ano_mes_ref: str | None, df: pd.DataFrame):
+    """Salva (ou atualiza) o livro-caixa mensal do dinheiro no Drive."""
     service = get_gdrive_service()
     folder_id = get_history_folder_id(service)
-    file_id = get_cash_file_id(service, folder_id)
-    filename = get_cash_file_name()
+    file_id = get_cash_file_id(service, folder_id, ano_mes_ref)
+    filename = get_cash_file_name(ano_mes_ref)
 
     buffer = BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
@@ -1039,30 +1043,21 @@ if st.session_state.get("auth_ok"):
         st.rerun()
 
 # ========================
-#  Carrega livro-caixa global de dinheiro
+#  Carrega livro-caixa mensal de dinheiro (arquivo do mês no Drive)
 # ========================
 
-if "df_caixa_global" not in st.session_state:
+ano_mes_ref = get_ano_mes(nome_periodo) or datetime.today().strftime("%Y-%m")
+
+if st.session_state.get("cash_loaded_for") != ano_mes_ref:
     try:
-        st.session_state["df_caixa_global"] = load_cash_from_gdrive()
+        st.session_state["df_caixa_mes"] = load_cash_from_gdrive(ano_mes_ref)
     except Exception:
-        st.session_state["df_caixa_global"] = pd.DataFrame(
+        st.session_state["df_caixa_mes"] = pd.DataFrame(
             columns=["Data", "Descrição", "Tipo", "Valor"]
         )
+    st.session_state["cash_loaded_for"] = ano_mes_ref
 
-df_caixa_global = st.session_state["df_caixa_global"].copy()
-
-ano_mes_ref = get_ano_mes(nome_periodo)
-
-# Filtra para o período (YYYY-MM) selecionado NA UI da aba Caixa Diário
-if not df_caixa_global.empty and ano_mes_ref:
-    datas = pd.to_datetime(df_caixa_global["Data"], errors="coerce")
-    mask = datas.dt.strftime("%Y-%m") == ano_mes_ref
-    df_dinheiro_periodo = df_caixa_global[mask].copy()
-else:
-    df_dinheiro_periodo = pd.DataFrame(
-        columns=["Data", "Descrição", "Tipo", "Valor"]
-    )
+df_dinheiro_periodo = st.session_state["df_caixa_mes"].copy()
 
 # ========================
 #  Cálculos principais
@@ -1150,15 +1145,20 @@ if arquivo_itau and arquivo_pag:
                     "Ajuste o Nome do período (iniciando com YYYY-MM) ou envie os extratos corretos."
                 )
 
-            # Filtra o livro-caixa global de dinheiro pelos mesmos meses
-            if not df_caixa_global.empty and meses_extratos:
-                datas_cash = pd.to_datetime(df_caixa_global["Data"], errors="coerce")
-                mask_cash = datas_cash.dt.strftime("%Y-%m").isin(meses_extratos)
-                df_dinheiro_periodo_fechar = df_caixa_global[mask_cash].copy()
-            else:
-                df_dinheiro_periodo_fechar = pd.DataFrame(
-                    columns=["Data", "Descrição", "Tipo", "Valor"]
-                )
+            # Carrega o(s) arquivo(s) mensais de caixa em dinheiro do(s) mesmo(s) mês(es) dos extratos
+            df_dinheiro_periodo_fechar = pd.DataFrame(
+                columns=["Data", "Descrição", "Tipo", "Valor"]
+            )
+
+            if meses_extratos:
+                caixas = []
+                for mes_ref in meses_extratos:
+                    try:
+                        caixas.append(load_cash_from_gdrive(mes_ref))
+                    except Exception:
+                        caixas.append(pd.DataFrame(columns=["Data", "Descrição", "Tipo", "Valor"]))
+                if caixas:
+                    df_dinheiro_periodo_fechar = pd.concat(caixas, ignore_index=True)
 
             # Totais de dinheiro para o(s) mesmo(s) mês(es) dos extratos
             df_din_validos_calc = df_dinheiro_periodo_fechar.copy()
@@ -1416,21 +1416,10 @@ with tab1:
 
     if salvar_caixa:
         try:
-            df_global = df_caixa_global.copy()
-
-            if ano_mes_ref:
-                datas = pd.to_datetime(df_global["Data"], errors="coerce")
-                mask = datas.dt.strftime("%Y-%m") == ano_mes_ref
-                df_outros_meses = df_global[~mask]
-            else:
-                df_outros_meses = df_global.iloc[0:0]
-
-            df_novo_global = pd.concat(
-                [df_outros_meses, df_din_limpo], ignore_index=True
-            )
-
-            st.session_state["df_caixa_global"] = df_novo_global
-            save_cash_to_gdrive(df_novo_global)
+            # Regra v1 estável: 1 arquivo por mês no Drive
+            save_cash_to_gdrive(ano_mes_ref, df_din_limpo)
+            st.session_state["df_caixa_mes"] = df_din_limpo.copy()
+            st.session_state["cash_loaded_for"] = ano_mes_ref
             st.success("Lançamentos de dinheiro salvos com sucesso no Google Drive!")
             st.rerun()
         except Exception as e:
