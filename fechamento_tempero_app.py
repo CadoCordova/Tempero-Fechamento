@@ -1363,6 +1363,16 @@ nome_periodo = st.sidebar.text_input(
     help='Ex.: "2025-11 1ª quinzena", "2025-10 mês cheio"',
 )
 
+# Fonte de dados (UI global)
+st.sidebar.markdown("---")
+fonte_dados_global = st.sidebar.radio(
+    "Fonte de dados",
+    ["Upload (extratos do mês)", "Histórico (Drive)"],
+    horizontal=False,
+    key="fonte_dados_global",
+)
+
+
 st.sidebar.markdown("---")
 st.sidebar.markdown(
     "Feito para a **Tempero das Gurias** 💕\n\n"
@@ -1803,18 +1813,13 @@ with tab2:
         '<div class="tempero-section-title">Resumo do período</div>',
         unsafe_allow_html=True,
     )
-
-    fonte_tab2 = st.radio(
-        "Fonte de dados",
-        ["Upload (extratos do mês)", "Histórico (Drive)"],
-        horizontal=True,
-        key="fonte_tab2",
-    )
+    fonte_tab2 = st.session_state.get("fonte_dados_global", "Upload (extratos do mês)")
 
     # -------------------------
     # MODO HISTÓRICO (somente leitura)
     # -------------------------
     if fonte_tab2 == "Histórico (Drive)":
+        st.caption("Fonte: Histórico (Drive) — visualização somente leitura")
         try:
             arquivos_hist = list_history_from_gdrive()
         except Exception as e:
@@ -2094,18 +2099,13 @@ with tab3:
         '<div class="tempero-section-title">🧾 Conferência de lançamentos e categorias</div>',
         unsafe_allow_html=True,
     )
-
-    fonte_tab3 = st.radio(
-        "Fonte de dados",
-        ["Upload (extratos do mês)", "Histórico (Drive)"],
-        horizontal=True,
-        key="fonte_tab3",
-    )
+    fonte_tab3 = st.session_state.get("fonte_dados_global", "Upload (extratos do mês)")
 
     # -------------------------
     # MODO HISTÓRICO (somente leitura)
     # -------------------------
     if fonte_tab3 == "Histórico (Drive)":
+        st.caption("Fonte: Histórico (Drive) — visualização somente leitura")
         try:
             arquivos_hist = list_history_from_gdrive()
         except Exception as e:
