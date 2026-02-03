@@ -108,6 +108,14 @@ def inject_css():
             color: {PRIMARY_COLOR} !important;
             border-bottom-color: transparent !important;
         }}
+        .tempero-alerta {{
+            background-color: #FFF3CD;
+            border-left: 4px solid #FFC107;
+            padding: 0.8rem;
+            margin: 0.5rem 0;
+            border-radius: 0.4rem;
+            font-size: 0.9rem;
+        }}
         </style>
         """,
         unsafe_allow_html=True,
@@ -560,6 +568,229 @@ def carregar_extrato_pagseguro_upload(uploaded_file):
 
     resultado = entradas + saidas
     return entradas, saidas, resultado, movimentos
+
+
+# ========================
+#  Validações de consistência
+# ========================
+
+def validar_consistencia_fechamento(df_mov, df_resumo_contas, df_consolidado, saldo_inicial):
+    """
+    Verifica se os totais batem e retorna lista de avisos.
+    
+    Parâmetros:
+    - df_mov: DataFrame com movimentos (colunas: Valor, Conta, Categoria)
+    - df_resumo_contas: DataFrame com resumo por conta
+    - df_consolidado: DataFrame com consolidado geral
+    - saldo_inicial: float com saldo inicial
+    
+    Retorna:
+    - Lista de strings com avisos de consistência
+    """
+    avisos = []
+    
+    if df_mov.empty or df_resumo_contas.empty or df_consolidado.empty:
+        return ["Dados insuficientes para validar consistência"]
+    
+    try:
+        # 1. Verificar soma dos movimentos vs resultado consolidado
+        total_movimentos = df_mov["Valor"].sum()
+        resultado_consolidado = df_consolidado["Resultado do período"].iloc[0]
+        
+        diferenca_movimentos = abs(total_movimentos - resultado_consolidado)
+        if diferenca_movimentos > 0.01:
+            avisos.append(
+                f"⚠️ Diferença na soma dos movimentos: "
+                f"Total movimentos = R$ {total_movimentos:,.2f}, "
+                f"Resultado consolidado = R$ {resultado_consolidado:,.2f} "
+                f"(diferença: R$ {diferenca_movimentos:,.2f})"
+            )
+        
+        # 2. Verificar saldo final
+        saldo_final_calculado = saldo_inicial + resultado_consolidado
+        saldo_final_relatorio = df_consolidado["Saldo final"].iloc[0]
+        
+        diferenca_saldo = abs(saldo_final_calculado - saldo_final_relatorio)
+        if diferenca_saldo > 0.01:
+            avisos.append(
+                f"⚠️ Saldo final inconsistente: "
+                f"Calculado = R$ {saldo_final_calculado:,.2f}, "
+                f"Relatório = R$ {saldo_final_relatorio:,.2f} "
+                f"(diferença: R$ {diferenca_saldo:,.2f})"
+            )
+        
+        # 3. Verificar entradas/saídas totais vs soma por conta
+        entradas_totais = df_consolidado["Entradas totais"].iloc[0]
+        saidas_totais = df_consolidado["Saídas totais"].iloc[0]
+        
+        entradas_contas = df_resumo_contas["Entradas"].sum()
+        saidas_contas = df_resumo_contas["Saídas"].sum()
+        
+        diferenca_entradas = abs(entradas_totais - entradas_contas)
+        if diferenca_entradas > 0.01:
+            avisos.append(
+                f"⚠️ Entradas totais não batem com soma por conta: "
+                f"Total = R$ {entradas_totais:,.2f}, "
+                f"Soma contas = R$ {entradas_contas:,.2f} "
+                f"(diferença: R$ {diferenca_entradas:,.2f})"
+            )
+        
+        diferenca_saidas = abs(saidas_totais - saidas_contas)
+        if diferenca_saidas > 0.01:
+            avisos.append(
+                f"⚠️ Saídas totais não batem com soma por conta: "
+                f"Total = R$ {saidas_totais:,.2f}, "
+                f"Soma contas = R$ {saidas_contas:,.2f} "
+                f"(diferença: R$ {diferenca_saidas:,.2f})"
+            )
+        
+        # 4. Verificar resultado por conta (Entradas + Saídas = Resultado)
+        for _, conta in df_resumo_contas.iterrows():
+            resultado_calculado = conta["Entradas"] + conta["Saídas"]
+            resultado_relatorio = conta["Resultado"]
+            
+            diferenca_conta = abs(resultado_calculado - resultado_relatorio)
+            if diferenca_conta > 0.01:
+                avisos.append(
+                    f"⚠️ Conta {conta['Conta']}: resultado inconsistente: "
+                    f"Calculado = R$ {resultado_calculado:,.2f}, "
+                    f"Relatório = R$ {resultado_relatorio:,.2f}"
+                )
+        
+        # 5. Verificar movimentos por conta vs resumo por conta
+        for conta_nome in ["Itaú", "PagSeguro", "Dinheiro"]:
+            if conta_nome in df_mov["Conta"].values:
+                movimentos_conta = df_mov[df_mov["Conta"] == conta_nome]["Valor"].sum()
+                
+                # Encontrar na tabela de resumo
+                if conta_nome in df_resumo_contas["Conta"].values:
+                    resumo_conta = df_resumo_contas[df_resumo_contas["Conta"] == conta_nome].iloc[0]
+                    resultado_resumo = resumo_conta["Resultado"]
+                    
+                    diferenca_conta_mov = abs(movimentos_conta - resultado_resumo)
+                    if diferenca_conta_mov > 0.01:
+                        avisos.append(
+                            f"⚠️ Conta {conta_nome}: soma dos movimentos não bate com resumo: "
+                            f"Movimentos = R$ {movimentos_conta:,.2f}, "
+                            f"Resumo = R$ {resultado_resumo:,.2f}"
+                        )
+        
+        # 6. Verificar se resultado consolidado = soma dos resultados por conta
+        resultado_contas = df_resumo_contas["Resultado"].sum()
+        diferenca_resultados = abs(resultado_consolidado - resultado_contas)
+        if diferenca_resultados > 0.01:
+            avisos.append(
+                f"⚠️ Resultado consolidado diferente da soma por conta: "
+                f"Consolidado = R$ {resultado_consolidado:,.2f}, "
+                f"Soma contas = R$ {resultado_contas:,.2f}"
+            )
+        
+        # 7. Verificar valores extremos ou suspeitos
+        if not df_mov.empty:
+            # Valores muito altos
+            limite_alto = 100000  # R$ 100.000
+            valores_altos = df_mov[abs(df_mov["Valor"]) > limite_alto]
+            if not valores_altos.empty:
+                for _, mov in valores_altos.iterrows():
+                    avisos.append(
+                        f"⚠️ Valor extremamente alto detectado: "
+                        f"R$ {abs(mov['Valor']):,.2f} em {mov['Conta']} - {mov['Descrição'][:50]}..."
+                    )
+            
+            # Muitas transações não classificadas
+            nao_classificadas = len(df_mov[df_mov["Categoria"] == "A Classificar"])
+            if nao_classificadas > 10:
+                avisos.append(f"⚠️ Alto número de transações não classificadas: {nao_classificadas}")
+            
+            # Transações com valor zero
+            zeros = len(df_mov[df_mov["Valor"] == 0])
+            if zeros > 5:
+                avisos.append(f"⚠️ {zeros} transações com valor zero")
+        
+        # 8. Verificar se entradas/saídas têm sinais consistentes
+        # Entradas devem ser positivas, saídas negativas no consolidado
+        if entradas_totais < 0:
+            avisos.append("⚠️ Entradas totais são negativas (verifique os sinais)")
+        
+        if saidas_totais > 0:
+            avisos.append("⚠️ Saídas totais são positivas (verifique os sinais)")
+        
+        # 9. Verificar consistência interna do consolidado
+        # Entradas + Saídas deve ser igual ao Resultado
+        resultado_calculado_cons = entradas_totais + saidas_totais
+        diferenca_interna = abs(resultado_consolidado - resultado_calculado_cons)
+        if diferenca_interna > 0.01:
+            avisos.append(
+                f"⚠️ Inconsistência interna no consolidado: "
+                f"Entradas + Saídas = R$ {resultado_calculado_cons:,.2f}, "
+                f"Resultado = R$ {resultado_consolidado:,.2f}"
+            )
+        
+    except Exception as e:
+        avisos.append(f"❌ Erro durante validação: {str(e)}")
+    
+    return avisos
+
+
+def exibir_painel_validacao(avisos, nivel_erro="warning"):
+    """
+    Exibe os avisos de validação em um painel formatado.
+    
+    Parâmetros:
+    - avisos: lista de strings com avisos
+    - nivel_erro: "success", "warning", ou "error"
+    """
+    if not avisos:
+        st.success("✅ Todas as validações passaram! Os dados estão consistentes.")
+        return
+    
+    # Determinar cor e ícone baseado no nível
+    if nivel_erro == "success":
+        cor_titulo = "green"
+        icone = "✅"
+    elif nivel_erro == "error":
+        cor_titulo = "red"
+        icone = "❌"
+    else:  # warning
+        cor_titulo = "orange"
+        icone = "⚠️"
+    
+    # Contar tipos de avisos
+    num_avisos = len(avisos)
+    num_criticos = sum(1 for a in avisos if a.startswith("❌"))
+    num_alertas = sum(1 for a in avisos if a.startswith("⚠️"))
+    
+    # Exibir resumo
+    with st.expander(f"{icone} Validação de Consistência ({num_avisos} avisos)", expanded=True):
+        if num_criticos > 0:
+            st.error(f"**{num_criticos} erro(s) crítico(s)** encontrado(s)")
+        if num_alertas > 0:
+            st.warning(f"**{num_alertas} alerta(s)** encontrado(s)")
+        
+        # Exibir cada aviso
+        for i, aviso in enumerate(avisos, 1):
+            st.markdown(f"**{i}.** {aviso}")
+        
+        # Ações recomendadas
+        if avisos:
+            st.markdown("---")
+            st.markdown("**Ações recomendadas:**")
+            
+            if any("Diferença na soma dos movimentos" in a for a in avisos):
+                st.markdown("• Verifique se todos os movimentos foram importados corretamente")
+                st.markdown("• Confira os filtros aplicados aos extratos")
+            
+            if any("Saldo final inconsistente" in a for a in avisos):
+                st.markdown("• Verifique o saldo inicial informado")
+                st.markdown("• Confira os cálculos manuais do saldo")
+            
+            if any("Valor extremamente alto" in a for a in avisos):
+                st.markdown("• Verifique se os valores estão corretos")
+                st.markdown("• Confira se há duplicação de lançamentos")
+            
+            if any("Alto número de transações não classificadas" in a for a in avisos):
+                st.markdown("• Ajuste as regras de categorização na aba 'Conferência & Categorias'")
+                st.markdown("• Classifique manualmente as transações pendentes")
 
 
 # ========================
@@ -1315,6 +1546,13 @@ if arquivo_itau and arquivo_pag:
                 ]
             )
 
+            # =========================================
+            # VALIDAÇÃO DE CONSISTÊNCIA
+            # =========================================
+            avisos_validacao = validar_consistencia_fechamento(
+                df_mov, df_resumo_contas, df_consolidado, saldo_inicial
+            )
+
             # ----------------------------------------
             # Excel (Resumo, Categorias, Movimentos, Dinheiro)
             # ----------------------------------------
@@ -1503,6 +1741,16 @@ with tab2:
             "Envie os arquivos do Itaú e PagSeguro na barra lateral para ver o fechamento."
         )
     else:
+        # =========================================
+        # EXIBIR VALIDAÇÕES DE CONSISTÊNCIA
+        # =========================================
+        if 'avisos_validacao' in locals() and avisos_validacao:
+            exibir_painel_validacao(avisos_validacao)
+        elif 'avisos_validacao' in globals() and avisos_validacao:
+            exibir_painel_validacao(avisos_validacao)
+        
+        st.markdown("---")
+        
         m1, m2, m3 = st.columns(3)
         with m1:
             st.markdown(
