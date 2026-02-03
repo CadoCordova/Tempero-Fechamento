@@ -1373,6 +1373,53 @@ fonte_dados_global = st.sidebar.radio(
 )
 
 
+# Se estiver em modo histórico, selecione o relatório na SIDEBAR e carregue automaticamente
+if has_role("admin") and st.session_state.get("fonte_dados_global") == "Histórico (Drive)":
+    st.sidebar.markdown("### Relatório do histórico")
+    try:
+        _arquivos_hist_sb = list_history_from_gdrive()
+    except Exception as e:
+        st.sidebar.error(f"Erro ao acessar Google Drive: {e}")
+        _arquivos_hist_sb = []
+
+    _fechamentos_sb = list_fechamentos_history_files(_arquivos_hist_sb)
+    if not _fechamentos_sb:
+        st.sidebar.info("Nenhum fechamento (fechamento_tempero_*.xlsx) no histórico.")
+        st.session_state.pop("hist_report_loaded", None)
+        st.session_state.pop("hist_report_name", None)
+        st.session_state.pop("hist_loaded_file_id", None)
+    else:
+        _opcoes_sb = {f["name"]: f["id"] for f in _fechamentos_sb}
+        _names_sb = list(_opcoes_sb.keys())
+
+        _default_name = st.session_state.get("hist_selected_name_sidebar")
+        if _default_name not in _opcoes_sb:
+            _default_name = _names_sb[0]
+
+        _idx = _names_sb.index(_default_name) if _default_name in _names_sb else 0
+
+        hist_nome_sel = st.sidebar.selectbox(
+            "Abrir fechamento (Drive)",
+            options=_names_sb,
+            index=_idx,
+            key="hist_selected_name_sidebar",
+        )
+        _file_id_sel = _opcoes_sb.get(hist_nome_sel)
+
+        # Auto-load ao trocar seleção
+        if _file_id_sel and st.session_state.get("hist_loaded_file_id") != _file_id_sel:
+            with st.spinner("Carregando relatório do histórico..."):
+                try:
+                    st.session_state["hist_report_loaded"] = load_fechamento_report_from_gdrive(_file_id_sel)
+                    st.session_state["hist_report_name"] = hist_nome_sel
+                    st.session_state["hist_loaded_file_id"] = _file_id_sel
+                except Exception as e:
+                    st.sidebar.error(f"Erro ao carregar relatório: {e}")
+                    st.session_state.pop("hist_report_loaded", None)
+                    st.session_state.pop("hist_report_name", None)
+                    st.session_state.pop("hist_loaded_file_id", None)
+
+
 st.sidebar.markdown("---")
 st.sidebar.markdown(
     "Feito para a **Tempero das Gurias** 💕\n\n"
@@ -1820,128 +1867,104 @@ with tab2:
     # -------------------------
     if fonte_tab2 == "Histórico (Drive)":
         st.caption("Fonte: Histórico (Drive) — visualização somente leitura")
-        try:
-            arquivos_hist = list_history_from_gdrive()
-        except Exception as e:
-            st.error(f"Erro ao acessar Google Drive: {e}")
-            arquivos_hist = []
 
-        fechamentos = list_fechamentos_history_files(arquivos_hist)
+        rep = st.session_state.get("hist_report_loaded")
+        nome_rep = st.session_state.get("hist_report_name")
 
-        if not fechamentos:
-            st.info("Nenhum relatório de fechamento (fechamento_tempero_*.xlsx) encontrado no histórico.")
+        if not rep:
+            st.info("Selecione um relatório do histórico na barra lateral para carregar.")
         else:
-            opcoes = {f["name"]: f["id"] for f in fechamentos}
-            nome_sel = st.selectbox(
-                "Escolha um relatório do histórico para abrir",
-                options=list(opcoes.keys()),
-                key="hist_sel_tab2",
-            )
+            if nome_rep:
+                st.caption(f"Relatório carregado: {nome_rep}")
+            df_consol_h = rep.get("consolidado", pd.DataFrame())
+            df_res_contas_h = rep.get("resumo_contas", pd.DataFrame())
+            df_cat_h = rep.get("categorias", pd.DataFrame())
 
-            col_h1, col_h2 = st.columns([1, 3])
-            with col_h1:
-                btn_carregar = st.button("Carregar relatório", key="btn_carregar_hist_tab2")
-
-            if btn_carregar:
-                try:
-                    st.session_state["hist_report_loaded"] = load_fechamento_report_from_gdrive(opcoes[nome_sel])
-                    st.session_state["hist_report_name"] = nome_sel
-                    st.success(f"Relatório carregado: {nome_sel}")
-                except Exception as e:
-                    st.error(f"Erro ao carregar relatório do histórico: {e}")
-
-            rep = st.session_state.get("hist_report_loaded")
-            if not rep:
-                st.info("Selecione um relatório e clique em **Carregar relatório**.")
+            if df_consol_h.empty:
+                st.warning("Não consegui ler a aba **ResumoDados** deste relatório. Ele pode ser muito antigo.")
             else:
-                df_consol_h = rep.get("consolidado", pd.DataFrame())
-                df_res_contas_h = rep.get("resumo_contas", pd.DataFrame())
-                df_cat_h = rep.get("categorias", pd.DataFrame())
+                linha = df_consol_h.iloc[0]
+                entradas_totais_h = float(linha.get("Entradas totais", 0.0) or 0.0)
+                saidas_totais_h = float(linha.get("Saídas totais", 0.0) or 0.0)
+                resultado_h = float(linha.get("Resultado do período", 0.0) or 0.0)
+                saldo_inicial_h = float(linha.get("Saldo inicial", 0.0) or 0.0)
+                saldo_final_h = float(linha.get("Saldo final", 0.0) or 0.0)
 
-                if df_consol_h.empty:
-                    st.warning("Não consegui ler a aba **ResumoDados** deste relatório. Ele pode ser muito antigo.")
-                else:
-                    linha = df_consol_h.iloc[0]
-                    entradas_totais_h = float(linha.get("Entradas totais", 0.0) or 0.0)
-                    saidas_totais_h = float(linha.get("Saídas totais", 0.0) or 0.0)
-                    resultado_h = float(linha.get("Resultado do período", 0.0) or 0.0)
-                    saldo_inicial_h = float(linha.get("Saldo inicial", 0.0) or 0.0)
-                    saldo_final_h = float(linha.get("Saldo final", 0.0) or 0.0)
-
-                    st.markdown("---")
-                    m1, m2, m3 = st.columns(3)
-                    with m1:
-                        st.markdown(
-                            f'''
-                            <div class="tempero-metric-card">
-                              <div class="tempero-metric-label">Entradas totais</div>
-                              <div class="tempero-metric-value">{format_currency(entradas_totais_h)}</div>
-                            </div>
-                            ''',
-                            unsafe_allow_html=True,
-                        )
-                    with m2:
-                        st.markdown(
-                            f'''
-                            <div class="tempero-metric-card">
-                              <div class="tempero-metric-label">Saídas totais</div>
-                              <div class="tempero-metric-value">{format_currency(saidas_totais_h)}</div>
-                            </div>
-                            ''',
-                            unsafe_allow_html=True,
-                        )
-                    with m3:
-                        st.markdown(
-                            f'''
-                            <div class="tempero-metric-card">
-                              <div class="tempero-metric-label">Resultado do período</div>
-                              <div class="tempero-metric-value">{format_currency(resultado_h)}</div>
-                            </div>
-                            ''',
-                            unsafe_allow_html=True,
-                        )
-
-                    st.markdown("---")
+                st.markdown("---")
+                m1, m2, m3 = st.columns(3)
+                with m1:
                     st.markdown(
-                        '<div class="tempero-section-title">🏁 Consolidado da loja</div>',
+                        f'''
+                        <div class="tempero-metric-card">
+                          <div class="tempero-metric-label">Entradas totais</div>
+                          <div class="tempero-metric-value">{format_currency(entradas_totais_h)}</div>
+                        </div>
+                        ''',
                         unsafe_allow_html=True,
                     )
-                    st.markdown('<div class="tempero-card">', unsafe_allow_html=True)
-                    st.write("Saldo inicial:", format_currency(saldo_inicial_h))
-                    st.write("Saldo final  :", format_currency(saldo_final_h))
-                    st.markdown("</div>", unsafe_allow_html=True)
+                with m2:
+                    st.markdown(
+                        f'''
+                        <div class="tempero-metric-card">
+                          <div class="tempero-metric-label">Saídas totais</div>
+                          <div class="tempero-metric-value">{format_currency(saidas_totais_h)}</div>
+                        </div>
+                        ''',
+                        unsafe_allow_html=True,
+                    )
+                with m3:
+                    st.markdown(
+                        f'''
+                        <div class="tempero-metric-card">
+                          <div class="tempero-metric-label">Resultado do período</div>
+                          <div class="tempero-metric-value">{format_currency(resultado_h)}</div>
+                        </div>
+                        ''',
+                        unsafe_allow_html=True,
+                    )
 
+                st.markdown("---")
                 st.markdown(
-                    '<div class="tempero-section-title">📑 Resumo por conta (do relatório)</div>',
+                    '<div class="tempero-section-title">🏁 Consolidado da loja</div>',
                     unsafe_allow_html=True,
                 )
-                if df_res_contas_h.empty:
-                    st.info("Não foi possível extrair o resumo por conta da aba **Resumo**.")
-                else:
-                    df_show = df_res_contas_h.copy()
-                    for col in ["Entradas", "Saídas", "Resultado"]:
-                        if col in df_show.columns:
-                            df_show[col] = df_show[col].apply(lambda x: format_currency(float(x)) if pd.notna(x) else "-")
-                    st.dataframe(df_show, use_container_width=True)
+                st.markdown('<div class="tempero-card">', unsafe_allow_html=True)
+                st.write("Saldo inicial:", format_currency(saldo_inicial_h))
+                st.write("Saldo final  :", format_currency(saldo_final_h))
+                st.markdown("</div>", unsafe_allow_html=True)
 
-                st.markdown(
-                    '<div class="tempero-section-title">📌 Resumo por categoria (do relatório)</div>',
-                    unsafe_allow_html=True,
-                )
-                if df_cat_h.empty:
-                    st.info("Este relatório não possui a aba **Categorias**.")
-                else:
-                    df_cat_disp = df_cat_h.copy()
-                    for col in ["Entradas", "Saídas"]:
-                        if col in df_cat_disp.columns:
-                            df_cat_disp[col] = df_cat_disp[col].apply(lambda x: format_currency(float(x)) if pd.notna(x) else "-")
-                    st.dataframe(df_cat_disp, use_container_width=True)
+            st.markdown(
+                '<div class="tempero-section-title">📑 Resumo por conta (do relatório)</div>',
+                unsafe_allow_html=True,
+            )
+            if df_res_contas_h.empty:
+                st.info("Não foi possível extrair o resumo por conta da aba **Resumo**.")
+            else:
+                df_show = df_res_contas_h.copy()
+                for col in ["Entradas", "Saídas", "Resultado"]:
+                    if col in df_show.columns:
+                        df_show[col] = df_show[col].apply(lambda x: format_currency(float(x)) if pd.notna(x) else "-")
+                st.dataframe(df_show, use_container_width=True)
+
+            st.markdown(
+                '<div class="tempero-section-title">📌 Resumo por categoria (do relatório)</div>',
+                unsafe_allow_html=True,
+            )
+            if df_cat_h.empty:
+                st.info("Este relatório não possui a aba **Categorias**.")
+            else:
+                df_cat_disp = df_cat_h.copy()
+                for col in ["Entradas", "Saídas"]:
+                    if col in df_cat_disp.columns:
+                        df_cat_disp[col] = df_cat_disp[col].apply(lambda x: format_currency(float(x)) if pd.notna(x) else "-")
+                st.dataframe(df_cat_disp, use_container_width=True)
 
         st.caption("Modo histórico: leitura somente. Para recalcular/ajustar, use o modo de upload do mês.")
 
     # -------------------------
     # MODO UPLOAD (comportamento atual)
     # -------------------------
+
     else:
         if mensagem_erro:
             st.error(mensagem_erro)
@@ -2106,60 +2129,35 @@ with tab3:
     # -------------------------
     if fonte_tab3 == "Histórico (Drive)":
         st.caption("Fonte: Histórico (Drive) — visualização somente leitura")
-        try:
-            arquivos_hist = list_history_from_gdrive()
-        except Exception as e:
-            st.error(f"Erro ao acessar Google Drive: {e}")
-            arquivos_hist = []
 
-        fechamentos = list_fechamentos_history_files(arquivos_hist)
+        rep = st.session_state.get("hist_report_loaded")
+        nome_rep = st.session_state.get("hist_report_name")
 
-        if not fechamentos:
-            st.info("Nenhum relatório de fechamento (fechamento_tempero_*.xlsx) encontrado no histórico.")
+        if not rep:
+            st.info("Selecione um relatório do histórico na barra lateral para carregar.")
         else:
-            opcoes = {f["name"]: f["id"] for f in fechamentos}
-            nome_sel = st.selectbox(
-                "Escolha um relatório do histórico para abrir",
-                options=list(opcoes.keys()),
-                key="hist_sel_tab3",
-            )
+            if nome_rep:
+                st.caption(f"Relatório carregado: {nome_rep}")
+            df_mov_h = rep.get("movimentos", pd.DataFrame())
+            df_cat_h = rep.get("categorias", pd.DataFrame())
 
-            col_h1, col_h2 = st.columns([1, 3])
-            with col_h1:
-                btn_carregar = st.button("Carregar relatório", key="btn_carregar_hist_tab3")
-
-            if btn_carregar:
-                try:
-                    st.session_state["hist_report_loaded"] = load_fechamento_report_from_gdrive(opcoes[nome_sel])
-                    st.session_state["hist_report_name"] = nome_sel
-                    st.success(f"Relatório carregado: {nome_sel}")
-                except Exception as e:
-                    st.error(f"Erro ao carregar relatório do histórico: {e}")
-
-            rep = st.session_state.get("hist_report_loaded")
-            if not rep:
-                st.info("Selecione um relatório e clique em **Carregar relatório**.")
+            st.markdown("---")
+            st.markdown("**Categorias (do relatório)**")
+            if df_cat_h.empty:
+                st.info("Este relatório não possui a aba **Categorias**.")
             else:
-                df_mov_h = rep.get("movimentos", pd.DataFrame())
-                df_cat_h = rep.get("categorias", pd.DataFrame())
+                df_cat_disp = df_cat_h.copy()
+                for col in ["Entradas", "Saídas"]:
+                    if col in df_cat_disp.columns:
+                        df_cat_disp[col] = df_cat_disp[col].apply(lambda x: format_currency(float(x)) if pd.notna(x) else "-")
+                st.dataframe(df_cat_disp, use_container_width=True)
 
-                st.markdown("---")
-                st.markdown("**Categorias (do relatório)**")
-                if df_cat_h.empty:
-                    st.info("Este relatório não possui a aba **Categorias**.")
-                else:
-                    df_cat_disp = df_cat_h.copy()
-                    for col in ["Entradas", "Saídas"]:
-                        if col in df_cat_disp.columns:
-                            df_cat_disp[col] = df_cat_disp[col].apply(lambda x: format_currency(float(x)) if pd.notna(x) else "-")
-                    st.dataframe(df_cat_disp, use_container_width=True)
-
-                st.markdown("---")
-                st.markdown("**Movimentos (do relatório)**")
-                if df_mov_h.empty:
-                    st.info("Este relatório não possui a aba **Movimentos**.")
-                else:
-                    st.dataframe(df_mov_h, use_container_width=True)
+            st.markdown("---")
+            st.markdown("**Movimentos (do relatório)**")
+            if df_mov_h.empty:
+                st.info("Este relatório não possui a aba **Movimentos**.")
+            else:
+                st.dataframe(df_mov_h, use_container_width=True)
 
         st.caption("Modo histórico: leitura somente. Para ajustar categorias/regras, use o modo de upload do mês.")
 
