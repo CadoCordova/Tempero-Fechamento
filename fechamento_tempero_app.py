@@ -708,17 +708,52 @@ def slugify(texto: str) -> str:
 
 def get_ano_mes(nome_periodo: str):
     """
-    Extrai "YYYY-MM" do início do nome do período, se válido.
-    (Usado só para filtrar a aba de Caixa Diário na UI.)
+    Extrai o mês de referência no formato YYYY-MM a partir do "Nome do período".
+
+    Regras:
+    - Se começar com "YYYY-MM", usa esse valor.
+    - Se começar com "Mês AAAA" (ex.: "Janeiro 2026"), converte para YYYY-MM.
     """
     if not nome_periodo:
         return None
-    parte = nome_periodo.strip()[:7]
+
+    s = str(nome_periodo).strip()
+
+    # 1) Formato direto YYYY-MM no início
+    parte = s[:7]
     try:
         datetime.strptime(parte, "%Y-%m")
         return parte
     except Exception:
-        return None
+        pass
+
+    # 2) Formato "Mês AAAA" no início (PT-BR)
+    meses = {
+        "janeiro": "01",
+        "fevereiro": "02",
+        "março": "03",
+        "marco": "03",
+        "abril": "04",
+        "maio": "05",
+        "junho": "06",
+        "julho": "07",
+        "agosto": "08",
+        "setembro": "09",
+        "outubro": "10",
+        "novembro": "11",
+        "dezembro": "12",
+    }
+
+    m = re.match(r"^([A-Za-zÀ-ÿ]+)\s+(\d{4})", s, flags=re.IGNORECASE)
+    if m:
+        mes_txt = m.group(1).strip().lower()
+        ano_txt = m.group(2).strip()
+        mes_num = meses.get(mes_txt)
+        if mes_num:
+            return f"{ano_txt}-{mes_num}"
+
+    return None
+
 
 
 # ========================
