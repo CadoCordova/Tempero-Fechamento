@@ -1866,7 +1866,6 @@ with tab2:
     # MODO HISTÓRICO (somente leitura)
     # -------------------------
     if fonte_tab2 == "Histórico (Drive)":
-        st.caption("Fonte: Histórico (Drive) — visualização somente leitura")
 
         rep = st.session_state.get("hist_report_loaded")
         nome_rep = st.session_state.get("hist_report_name")
@@ -1874,8 +1873,6 @@ with tab2:
         if not rep:
             st.info("Selecione um relatório do histórico na barra lateral para carregar.")
         else:
-            if nome_rep:
-                st.caption(f"Relatório carregado: {nome_rep}")
             df_consol_h = rep.get("consolidado", pd.DataFrame())
             df_res_contas_h = rep.get("resumo_contas", pd.DataFrame())
             df_cat_h = rep.get("categorias", pd.DataFrame())
@@ -1959,9 +1956,14 @@ with tab2:
                         df_cat_disp[col] = df_cat_disp[col].apply(lambda x: format_currency(float(x)) if pd.notna(x) else "-")
                 st.dataframe(df_cat_disp, use_container_width=True)
 
+        st.markdown("---")
+        st.caption("Fonte: Histórico (Drive) — visualização somente leitura")
+        if nome_rep:
+            st.caption(f"Relatório carregado: {nome_rep}")
         st.caption("Modo histórico: leitura somente. Para recalcular/ajustar, use o modo de upload do mês.")
 
     # -------------------------
+
     # MODO UPLOAD (comportamento atual)
     # -------------------------
 
@@ -2128,7 +2130,6 @@ with tab3:
     # MODO HISTÓRICO (somente leitura)
     # -------------------------
     if fonte_tab3 == "Histórico (Drive)":
-        st.caption("Fonte: Histórico (Drive) — visualização somente leitura")
 
         rep = st.session_state.get("hist_report_loaded")
         nome_rep = st.session_state.get("hist_report_name")
@@ -2136,8 +2137,6 @@ with tab3:
         if not rep:
             st.info("Selecione um relatório do histórico na barra lateral para carregar.")
         else:
-            if nome_rep:
-                st.caption(f"Relatório carregado: {nome_rep}")
             df_mov_h = rep.get("movimentos", pd.DataFrame())
             df_cat_h = rep.get("categorias", pd.DataFrame())
 
@@ -2159,9 +2158,15 @@ with tab3:
             else:
                 st.dataframe(df_mov_h, use_container_width=True)
 
+        st.markdown("---")
+        st.caption("Fonte: Histórico (Drive) — visualização somente leitura")
+        if nome_rep:
+            st.caption(f"Relatório carregado: {nome_rep}")
         st.caption("Modo histórico: leitura somente. Para ajustar categorias/regras, use o modo de upload do mês.")
 
+
     # -------------------------
+
     # MODO UPLOAD (comportamento atual)
     # -------------------------
     else:
