@@ -815,20 +815,65 @@ def salvar_regras(regras: dict):
 
 
 def carregar_categorias_personalizadas():
+    """Carrega categorias personalizadas.
+
+    Prioridade:
+      1) Google Drive (pasta de históricos) -> categorias_personalizadas.json
+      2) Arquivo local (CATEGORIAS_PATH)
+
+    Retorna sempre uma lista (sem duplicidades).
+    """
+    categorias = []
+
+    # 1) tenta Drive
+    data_drive = load_json_from_gdrive_history(CATEGORIAS_PATH.name)
+    if isinstance(data_drive, list):
+        categorias.extend([c for c in data_drive if isinstance(c, str) and c.strip()])
+
+    # 2) tenta local
     if CATEGORIAS_PATH.exists():
         try:
             with CATEGORIAS_PATH.open("r", encoding="utf-8") as f:
                 data = json.load(f)
                 if isinstance(data, list):
-                    return data
+                    categorias.extend([c for c in data if isinstance(c, str) and c.strip()])
         except Exception:
             pass
-    return []
+
+    # remove duplicados preservando ordem
+    seen = set()
+    out = []
+    for c in categorias:
+        c = c.strip()
+        if c and c not in seen:
+            out.append(c)
+            seen.add(c)
+    return out
 
 
 def salvar_categorias_personalizadas(lista):
+    """Salva categorias personalizadas localmente e no Google Drive."""
+    # normaliza e remove duplicados
+    norm = []
+    seen = set()
+    for c in (lista or []):
+        if not isinstance(c, str):
+            continue
+        c = c.strip()
+        if c and c not in seen:
+            norm.append(c)
+            seen.add(c)
+
+    # salva local
     with CATEGORIAS_PATH.open("w", encoding="utf-8") as f:
-        json.dump(lista, f, ensure_ascii=False, indent=2)
+        json.dump(norm, f, ensure_ascii=False, indent=2)
+
+    # salva no Drive (se tiver auth/serviço)
+    try:
+        save_json_to_gdrive_history(CATEGORIAS_PATH.name, norm)
+    except Exception:
+        # não bloqueia a operação se Drive falhar
+        pass
 
 
 def classificar_categoria(mov):
@@ -840,6 +885,24 @@ def classificar_categoria(mov):
         for padrao, categoria in REGRAS_CATEGORIA.items():
             if padrao in desc_norm:
                 return categoria
+
+    # ==========================
+    # Regras fixas (prioritárias)
+    # ==========================
+
+    # Sangria
+    if "SANGRIA" in desc_norm:
+        return "Sangria"
+
+    # Impostos e encargos (Receita Federal)
+    if "RECEITA FEDERAL" in desc_norm or "RFB" in desc_norm:
+        return "Impostos e Encargos"
+
+    # Internet (Claro / Vivo)
+    if "CLARO" in desc_norm:
+        return "Internet"
+    if "VIVO" in desc_norm and ("CONCESSIONARIA" in desc_norm or "CONCESSIONÁRIA" in desc_norm or "VIVO-RS" in desc_norm):
+        return "Internet"
 
     if "ANTINSECT" in desc_norm:
         return "Dedetização / Controle de Pragas"
@@ -1082,6 +1145,60 @@ def get_history_folder_id(service):
 
     st.session_state["gdrive_history_folder_id"] = folder_id
     return folder_id
+
+
+
+def _find_file_in_folder(service, folder_id: str, filename: str):
+    query = (
+        f"'{folder_id}' in parents and trashed = false and name = '{filename}'"
+    )
+    results = (
+        service.files()
+        .list(q=query, spaces="drive", fields="files(id, name)", pageSize=5)
+        .execute()
+    )
+    files = results.get("files", [])
+    return files[0]["id"] if files else None
+
+
+def load_json_from_gdrive_history(filename: str):
+    """Carrega um JSON (por nome) da pasta de históricos no Google Drive."""
+    try:
+        service = get_gdrive_service()
+        folder_id = get_history_folder_id(service)
+        file_id = _find_file_in_folder(service, folder_id, filename)
+        if not file_id:
+            return None
+
+        request = service.files().get_media(fileId=file_id)
+        fh = BytesIO()
+        downloader = MediaIoBaseDownload(fh, request)
+        done = False
+        while not done:
+            _, done = downloader.next_chunk()
+
+        fh.seek(0)
+        return json.load(fh)
+    except Exception:
+        return None
+
+
+def save_json_to_gdrive_history(filename: str, payload):
+    """Salva/atualiza um JSON (por nome) na pasta de históricos no Google Drive."""
+    service = get_gdrive_service()
+    folder_id = get_history_folder_id(service)
+
+    data_bytes = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
+    buffer = BytesIO(data_bytes)
+    media = MediaIoBaseUpload(buffer, mimetype="application/json", resumable=False)
+
+    file_id = _find_file_in_folder(service, folder_id, filename)
+
+    if file_id:
+        service.files().update(fileId=file_id, media_body=media).execute()
+    else:
+        metadata = {"name": filename, "parents": [folder_id], "mimeType": "application/json"}
+        service.files().create(body=metadata, media_body=media, fields="id").execute()
 
 
 def upload_history_to_gdrive(buffer: BytesIO, filename: str):
@@ -2187,6 +2304,8 @@ with tab3:
                 "Dedetização / Controle de Pragas",
                 "Energia Elétrica",
                 "Motoboy / Entregas",
+                "Internet",
+                "Sangria",
                 "Nutricionista",
                 "Impostos e Encargos",
                 "Investimentos (Aplicações)",
