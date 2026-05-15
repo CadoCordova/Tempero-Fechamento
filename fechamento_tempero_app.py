@@ -2,6 +2,9 @@ import re
 from collections import defaultdict
 from datetime import datetime
 from io import BytesIO
+from pathlib import Path
+
+APP_VERSION = Path("VERSION").read_text(encoding="utf-8").strip()
 
 import altair as alt
 import pandas as pd
@@ -126,7 +129,8 @@ if has_role("admin") and st.session_state.get("fonte_dados_global") == "Históri
                         st.session_state.pop(k, None)
 
 st.sidebar.markdown("---")
-st.sidebar.markdown("Feito para a **Tempero das Gurias** 💕\n\n")
+st.sidebar.markdown(f"Feito para a **Tempero das Gurias** 💕")
+st.sidebar.caption(f"v{APP_VERSION}")
 
 if st.session_state.get("auth_ok"):
     st.sidebar.markdown("---")
