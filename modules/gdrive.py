@@ -36,8 +36,15 @@ def get_gdrive_service():
     )
 
     try:
-        if not creds.valid and creds.refresh_token:
-            creds.refresh(Request())
+        if not creds.valid:
+            if creds.refresh_token:
+                creds.refresh(Request())
+            else:
+                st.error(
+                    "Token do Google Drive inválido e sem refresh_token. "
+                    "Reconfigure a seção [gdrive_oauth] nas secrets do Streamlit."
+                )
+                st.stop()
         return build("drive", "v3", credentials=creds)
 
     except RefreshError as e:

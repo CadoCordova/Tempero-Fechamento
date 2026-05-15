@@ -1,3 +1,4 @@
+from io import BytesIO
 from pathlib import Path
 
 import pandas as pd
@@ -13,10 +14,13 @@ def ler_arquivo_tabela_upload(uploaded_file) -> list[dict]:
     suffix = Path(uploaded_file.name).suffix.lower()
 
     if suffix in (".csv", ".txt"):
-        df = pd.read_csv(uploaded_file, sep=";")
+        # sep=None com engine="python" detecta automaticamente o separador (;  ,  tab…)
+        df = pd.read_csv(uploaded_file, sep=None, engine="python")
 
     elif suffix in (".xlsx", ".xls"):
-        raw = pd.read_excel(uploaded_file, header=None)
+        # Lê os bytes uma única vez para poder reusar o stream caso o header não seja encontrado
+        raw_bytes = BytesIO(uploaded_file.read())
+        raw = pd.read_excel(raw_bytes, header=None)
 
         header_idx = None
         for i, row in raw.iterrows():
@@ -40,7 +44,8 @@ def ler_arquivo_tabela_upload(uploaded_file) -> list[dict]:
             df.columns = cols
             df = df.dropna(how="all").reset_index(drop=True)
         else:
-            df = pd.read_excel(uploaded_file)
+            raw_bytes.seek(0)
+            df = pd.read_excel(raw_bytes)
     else:
         raise RuntimeError(f"Formato não suportado: {suffix}. Use .csv ou .xlsx.")
 

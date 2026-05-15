@@ -52,7 +52,9 @@ def load_cash_from_gdrive(ano_mes_ref: str | None) -> pd.DataFrame:
             if col not in df.columns:
                 df[col] = None
         return df[_cols]
-    except Exception:
+    except Exception as e:
+        import streamlit as st
+        st.warning(f"Não foi possível carregar o caixa do Google Drive: {e}")
         return pd.DataFrame(columns=_cols)
 
 

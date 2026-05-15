@@ -1,3 +1,5 @@
+import hmac
+
 import streamlit as st
 
 from modules.ui import inject_css
@@ -79,7 +81,7 @@ def check_auth():
                 st.error("Usuário não encontrado ou não configurado.")
                 st.stop()
 
-            if senha == user_cfg.get("password"):
+            if hmac.compare_digest(senha, user_cfg.get("password", "")):
                 st.session_state["auth_ok"] = True
                 st.session_state["user"] = username
                 st.session_state["role"] = user_cfg.get("role", "operador")
@@ -95,7 +97,7 @@ def check_auth():
                 )
                 st.stop()
 
-            if senha == senha_correta:
+            if hmac.compare_digest(senha, senha_correta):
                 st.session_state["auth_ok"] = True
                 st.session_state["user"] = username or "admin"
                 st.session_state["role"] = "admin"

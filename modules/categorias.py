@@ -35,6 +35,16 @@ CATEGORIAS_PADRAO = [
 # ---------------------------------------------------------------------------
 
 def carregar_regras() -> dict:
+    """
+    Carrega regras de categorização.
+    Prioridade: Google Drive → arquivo local.
+    """
+    # 1) tenta Drive (sobrevive a redeploys no Streamlit Cloud)
+    data_drive = load_json_from_gdrive_history(RULES_PATH.name)
+    if isinstance(data_drive, dict):
+        return data_drive
+
+    # 2) fallback local
     if RULES_PATH.exists():
         try:
             with RULES_PATH.open("r", encoding="utf-8") as f:
@@ -47,8 +57,14 @@ def carregar_regras() -> dict:
 
 
 def salvar_regras(regras: dict):
+    """Salva regras localmente e no Google Drive."""
     with RULES_PATH.open("w", encoding="utf-8") as f:
         json.dump(regras, f, ensure_ascii=False, indent=2)
+
+    try:
+        save_json_to_gdrive_history(RULES_PATH.name, regras)
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -146,7 +162,7 @@ def classificar_categoria(mov: dict, regras: dict | None = None) -> str:
     if "CLARO" in desc_norm:
         return "Internet"
     if "VIVO" in desc_norm and any(
-        kw in desc_norm for kw in ("CONCESSIONARIA", "CONCESSIONARIA", "VIVO-RS")
+        kw in desc_norm for kw in ("CONCESSIONARIA", "VIVO-RS")
     ):
         return "Internet"
 
@@ -160,10 +176,10 @@ def classificar_categoria(mov: dict, regras: dict | None = None) -> str:
         return "Contabilidade e RH"
 
     if any(kw in desc_norm for kw in ("BUSINESS      0503-2852", "BUSINESS 0503-2852",
-                                       "ITAU UNIBANCO HOLDING S.A.", "CARTAO", "CARTAO")):
+                                       "ITAU UNIBANCO HOLDING S.A.", "CARTAO")):
         return "Fatura Cartão"
 
-    if any(kw in desc_norm for kw in ("APLICACAO", "APLICACAO", "CDB", "CREDBANCRF")):
+    if any(kw in desc_norm for kw in ("APLICACAO", "CDB", "CREDBANCRF")):
         return "Investimentos (Aplicações)"
 
     if any(kw in desc_norm for kw in ("REND PAGO APLIC", "RENDIMENTO APLIC", "REND APLIC", "RENDIMENTO")):
@@ -175,7 +191,7 @@ def classificar_categoria(mov: dict, regras: dict | None = None) -> str:
     if "MOTOBOY" in desc_norm or "ENTREGA" in desc_norm:
         return "Motoboy / Entregas"
 
-    if any(kw in desc_norm for kw in ("CAROLINE", "VERONICA", "EVELLYN", "SALARIO", "SALARIO", "FOLHA")):
+    if any(kw in desc_norm for kw in ("CAROLINE", "VERONICA", "EVELLYN", "SALARIO", "FOLHA")):
         return "Folha de Pagamento"
 
     if "ANA PAULA" in desc_norm or "NUTRICIONISTA" in desc_norm:
@@ -184,7 +200,7 @@ def classificar_categoria(mov: dict, regras: dict | None = None) -> str:
     if any(kw in desc_norm for kw in ("DARF", "GPS", "FGTS", "INSS", "SIMPLES NACIONAL", "IMPOSTO")):
         return "Impostos e Encargos"
 
-    if any(kw in desc_norm for kw in ("TRANSFERENCIA", "TRANSFERENCIA", "PIX")) and any(
+    if any(kw in desc_norm for kw in ("TRANSFERENCIA", "PIX")) and any(
         kw in desc_norm for kw in ("RICARDO", "LIZIANI", "LIZI")
     ):
         return "Transferência Interna / Sócios"

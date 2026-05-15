@@ -19,7 +19,11 @@ def parse_numero_br(valor):
         return 0.0
 
     if "," in s:
+        # formato BR: "1.234,56" → remove ponto de milhar, troca vírgula por ponto
         s = s.replace(".", "").replace(",", ".")
+    elif re.match(r"^\d{1,3}(\.\d{3})+$", s):
+        # ponto de milhar sem vírgula: "1.234" → "1234"
+        s = s.replace(".", "")
     return float(s)
 
 
