@@ -32,14 +32,18 @@ _MESES_PT = {
 # Autenticação
 # ---------------------------------------------------------------------------
 
+_GMAIL_SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
+
+
 def _get_gmail_service():
     """
     Cria o cliente Gmail API.
-    Tenta gdrive_oauth primeiro (se tiver escopo Gmail); cai para gmail_oauth.
-    Lança RuntimeError com mensagem clara se nenhuma credencial funcionar.
+    Ordem de preferência: gmail_oauth → gdrive_oauth (fallback).
+    Rejeita credenciais que não tenham o escopo gmail.readonly,
+    lançando RuntimeError com orientação clara.
     """
     errors = []
-    for secret_key in ("gdrive_oauth", "gmail_oauth"):
+    for secret_key in ("gmail_oauth", "gdrive_oauth"):
         try:
             info = st.secrets[secret_key]
         except Exception:
@@ -48,6 +52,14 @@ def _get_gmail_service():
         scopes = info.get("scopes", [])
         if isinstance(scopes, str):
             scopes = [scopes]
+
+        # Rejeita imediatamente se o escopo Gmail não estiver presente
+        if not any("gmail" in s for s in scopes):
+            errors.append(
+                f"{secret_key}: escopo gmail.readonly ausente "
+                f"(escopos encontrados: {scopes})"
+            )
+            continue
 
         creds = Credentials(
             token=info.get("token"),
@@ -67,15 +79,12 @@ def _get_gmail_service():
             errors.append(f"{secret_key}: {e}")
             continue
 
-    msg = "Não foi possível autenticar com o Gmail."
-    if errors:
-        msg += " Detalhes: " + "; ".join(errors)
-    msg += (
-        " Configure gdrive_oauth com escopo Gmail "
-        "(https://www.googleapis.com/auth/gmail.readonly) "
-        "ou adicione a seção [gmail_oauth] nos secrets do Streamlit."
+    detalhes = "; ".join(errors) if errors else "nenhuma credencial disponível"
+    raise RuntimeError(
+        f"Não foi possível autenticar com o Gmail ({detalhes}). "
+        "Adicione a seção [gmail_oauth] nos secrets do Streamlit Cloud com "
+        f"escopo '{_GMAIL_SCOPE}' e token da conta temperodasgurias@gmail.com."
     )
-    raise RuntimeError(msg)
 
 
 # ---------------------------------------------------------------------------
