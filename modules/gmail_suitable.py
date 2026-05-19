@@ -73,8 +73,7 @@ def _get_gmail_service():
         try:
             if not creds.valid and creds.refresh_token:
                 creds.refresh(Request())
-            if creds.valid:
-                return build("gmail", "v1", credentials=creds)
+            return build("gmail", "v1", credentials=creds)
         except Exception as e:
             errors.append(f"{secret_key}: {e}")
             continue
