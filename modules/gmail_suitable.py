@@ -285,6 +285,10 @@ def buscar_fechamentos_gmail(ano_mes: str) -> list[dict]:
         else:
             data_fechamento = data_email
 
+        # Descarta emails cujo lançamento pertence a outro mês
+        if data_fechamento.year != ano or data_fechamento.month != mes:
+            continue
+
         lancamentos = _parse_email_html(html, data_fechamento)
         todos.extend(lancamentos)
 
