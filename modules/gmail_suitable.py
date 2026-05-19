@@ -174,21 +174,14 @@ def _parse_email_html(html: str, data_fechamento: date) -> list[dict]:
                 contexto = txt
                 break
 
-        is_pagamento = (
-            any("forma" in h or "pagamento" in h for h in headers)
-            or "forma de pagamento" in contexto
-            or "total por forma" in contexto
+        # Identifica APENAS "Total por forma de Pagamento" — exclui "Saldos de Fechamento"
+        is_total_pagamento = (
+            "total por forma" in contexto
+            and "saldo" not in contexto
         )
-        is_contas = (
-            "contas pagas" in contexto
-            or "conta" in contexto
-            or (
-                not is_pagamento
-                and any("conta" in h or "descri" in h for h in headers)
-            )
-        )
+        is_contas = "contas pagas" in contexto
 
-        if is_pagamento:
+        if is_total_pagamento:
             valor_idx = next((i for i, h in enumerate(headers) if "valor" in h), len(headers) - 1)
             forma_idx = next(
                 (i for i, h in enumerate(headers) if "forma" in h or "pagamento" in h), 0
@@ -199,6 +192,7 @@ def _parse_email_html(html: str, data_fechamento: date) -> list[dict]:
                 if len(cols) <= max(forma_idx, valor_idx):
                     continue
                 forma = cols[forma_idx].get_text(strip=True).lower()
+                # Ignora linha "Saldo anterior" e qualquer linha que não seja Dinheiro
                 if "dinheiro" not in forma:
                     continue
                 valor = parse_numero_br(cols[valor_idx].get_text(strip=True))
