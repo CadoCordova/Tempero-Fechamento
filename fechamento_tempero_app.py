@@ -11,16 +11,6 @@ import pandas as pd
 import streamlit as st
 from openpyxl.styles import Alignment, Font
 
-# DEBUG temporário — remover após confirmar
-try:
-    _keys = list(st.secrets.keys())
-    _gmail_ok = "gmail_oauth" in st.secrets
-    _gmail_scopes = list(st.secrets.get("gmail_oauth", {}).get("scopes", []))
-except Exception as _e:
-    _keys = str(_e)
-    _gmail_ok = False
-    _gmail_scopes = []
-
 from modules.auth import check_auth, current_role, current_user, has_role, require_role
 from modules.caixa import lancar_importados_gmail, load_cash_from_gdrive, save_cash_to_gdrive
 from modules.gmail_suitable import buscar_fechamentos_gmail
@@ -410,8 +400,6 @@ with tab1:
             st.rerun()
         except Exception as e:
             st.error(f"Erro ao salvar caixa diário no Drive: {e}")
-
-    st.caption(f"DEBUG secrets: {_keys} | gmail_oauth presente: {_gmail_ok} | scopes: {_gmail_scopes}")
 
     # ---- Importação do Gmail (Suitable) ----
     with st.expander("📥 Importar do Gmail (Suitable)"):
