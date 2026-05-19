@@ -12,7 +12,8 @@ import streamlit as st
 from openpyxl.styles import Alignment, Font
 
 from modules.auth import check_auth, current_role, current_user, has_role, require_role
-from modules.caixa import load_cash_from_gdrive, save_cash_to_gdrive
+from modules.caixa import lancar_importados_gmail, load_cash_from_gdrive, save_cash_to_gdrive
+from modules.gmail_suitable import buscar_fechamentos_gmail
 from modules.categorias import (
     CATEGORIAS_PADRAO,
     carregar_categorias_personalizadas,
@@ -399,6 +400,55 @@ with tab1:
             st.rerun()
         except Exception as e:
             st.error(f"Erro ao salvar caixa diário no Drive: {e}")
+
+    # ---- Importação do Gmail (Suitable) ----
+    with st.expander("📥 Importar do Gmail (Suitable)"):
+        st.markdown(
+            "Busca os emails de **Fechamento de caixa** do Suitable "
+            f"para o período **{ano_mes_ref}** e importa os lançamentos em dinheiro."
+        )
+
+        if st.button("🔍 Buscar fechamentos do Gmail", key="btn_buscar_gmail"):
+            with st.spinner("Buscando emails..."):
+                try:
+                    preview = buscar_fechamentos_gmail(ano_mes_ref)
+                    st.session_state["gmail_preview"] = preview
+                except RuntimeError as e:
+                    st.error(str(e))
+                    st.session_state.pop("gmail_preview", None)
+                except Exception as e:
+                    st.error(f"Erro inesperado ao buscar emails: {e}")
+                    st.session_state.pop("gmail_preview", None)
+
+        preview = st.session_state.get("gmail_preview")
+        if preview is not None:
+            if not preview:
+                st.info(f"Nenhum lançamento encontrado nos emails de {ano_mes_ref}.")
+            else:
+                st.success(f"**{len(preview)} lançamento(s)** encontrado(s) para {ano_mes_ref}:")
+
+                df_prev = pd.DataFrame(preview)
+                df_prev["Data"] = pd.to_datetime(df_prev["Data"]).dt.strftime("%d/%m/%Y")
+                df_prev["Valor"] = df_prev["Valor"].apply(format_currency)
+                st.dataframe(df_prev[["Data", "Descrição", "Tipo", "Valor"]], use_container_width=True, hide_index=True)
+
+                if st.button("✅ Confirmar importação", key="btn_confirmar_gmail"):
+                    with st.spinner("Importando..."):
+                        try:
+                            inseridos, duplicatas = lancar_importados_gmail(
+                                ano_mes_ref, st.session_state["gmail_preview"]
+                            )
+                            # Recarrega caixa na sessão
+                            st.session_state.pop("df_caixa_mes", None)
+                            st.session_state.pop("cash_loaded_for", None)
+                            st.session_state.pop("gmail_preview", None)
+                            msg = f"✅ **{inseridos}** lançamento(s) importado(s)."
+                            if duplicatas:
+                                msg += f" {duplicatas} duplicata(s) ignorada(s)."
+                            st.success(msg)
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Erro ao importar lançamentos: {e}")
 
     df_din_calc = df_din_limpo.copy()
     if not df_din_calc.empty and "Valor" in df_din_calc.columns:

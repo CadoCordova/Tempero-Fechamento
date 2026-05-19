@@ -58,6 +58,66 @@ def load_cash_from_gdrive(ano_mes_ref: str | None) -> pd.DataFrame:
         return pd.DataFrame(columns=_cols)
 
 
+def lancar_importados_gmail(ano_mes_ref: str | None, novos: list[dict]) -> tuple[int, int]:
+    """
+    Mescla lançamentos importados do Gmail com o caixa existente no Drive.
+
+    Duplicatas são detectadas por (Data + Descrição + Valor).
+    Retorna (qtd_inseridos, qtd_duplicatas_ignoradas).
+    """
+    df_atual = load_cash_from_gdrive(ano_mes_ref)
+
+    # Normaliza datas do df_atual para comparação
+    if not df_atual.empty and "Data" in df_atual.columns:
+        df_atual["_data_str"] = pd.to_datetime(df_atual["Data"], errors="coerce").dt.strftime("%Y-%m-%d")
+    else:
+        df_atual["_data_str"] = pd.Series(dtype=str)
+
+    inseridos = 0
+    duplicatas = 0
+    novos_rows = []
+
+    for item in novos:
+        data_item = item["Data"]
+        data_str = data_item.strftime("%Y-%m-%d") if hasattr(data_item, "strftime") else str(data_item)
+        desc = str(item.get("Descrição", "")).strip()
+        valor = float(item.get("Valor", 0.0))
+
+        # Verifica duplicata
+        if not df_atual.empty:
+            duplicado = (
+                (df_atual["_data_str"] == data_str)
+                & (df_atual["Descrição"].fillna("").astype(str).str.strip() == desc)
+                & (df_atual["Valor"].fillna(0).astype(float).round(2) == round(valor, 2))
+            ).any()
+        else:
+            duplicado = False
+
+        if duplicado:
+            duplicatas += 1
+        else:
+            novos_rows.append({
+                "Data": data_item,
+                "Descrição": desc,
+                "Tipo": item.get("Tipo", "Entrada"),
+                "Valor": valor,
+            })
+            inseridos += 1
+
+    if novos_rows:
+        df_novos = pd.DataFrame(novos_rows, columns=["Data", "Descrição", "Tipo", "Valor"])
+        df_atual = df_atual.drop(columns=["_data_str"], errors="ignore")
+        df_merged = pd.concat([df_atual, df_novos], ignore_index=True)
+        # Ordena por data
+        df_merged["Data"] = pd.to_datetime(df_merged["Data"], errors="coerce")
+        df_merged = df_merged.sort_values("Data").reset_index(drop=True)
+        save_cash_to_gdrive(ano_mes_ref, df_merged)
+    else:
+        df_atual = df_atual.drop(columns=["_data_str"], errors="ignore")
+
+    return inseridos, duplicatas
+
+
 def save_cash_to_gdrive(ano_mes_ref: str | None, df: pd.DataFrame):
     """Salva (ou atualiza) o livro-caixa mensal do dinheiro no Drive."""
     service = get_gdrive_service()
