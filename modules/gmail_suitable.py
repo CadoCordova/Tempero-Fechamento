@@ -5,7 +5,7 @@ fechamento de caixa enviados pelo Suitable (envios@suitable.com.br).
 import base64
 import re
 import unicodedata
-from datetime import date
+from datetime import date, timedelta
 
 import streamlit as st
 from google.auth.transport.requests import Request
@@ -90,27 +90,32 @@ def _get_gmail_service():
 # Parsing de data
 # ---------------------------------------------------------------------------
 
-def _parse_data_pt(texto: str) -> date | None:
+def _parse_data_hora_pt(texto: str) -> tuple[date, int] | tuple[None, None]:
     """
-    Extrai uma data do formato "DD de Mês de YYYY" (pt-BR) presente no texto.
-    Retorna None se não encontrar.
+    Extrai data e hora do padrão "DD de Mês de YYYY às HH:MM" (pt-BR).
+    Retorna (date, hora_int) ou (None, None) se não encontrar.
+    A hora é usada para aplicar a regra de dia anterior (< 11h).
     """
-    m = re.search(r"(\d{1,2})\s+de\s+(\w+)\s+de\s+(\d{4})", texto, re.IGNORECASE)
+    m = re.search(
+        r"(\d{1,2})\s+de\s+(\w+)\s+de\s+(\d{4})(?:\s+[àa]s?\s+(\d{1,2}):\d{2})?",
+        texto, re.IGNORECASE,
+    )
     if not m:
-        return None
+        return None, None
 
     dia = int(m.group(1))
     mes_txt = unicodedata.normalize("NFD", m.group(2).lower()).encode("ascii", "ignore").decode("ascii")
     ano = int(m.group(3))
+    hora = int(m.group(4)) if m.group(4) is not None else 11  # sem hora → não aplica regra
 
     mes = _MESES_PT.get(mes_txt)
     if not mes:
-        return None
+        return None, None
 
     try:
-        return date(ano, mes, dia)
+        return date(ano, mes, dia), hora
     except ValueError:
-        return None
+        return None, None
 
 
 # ---------------------------------------------------------------------------
@@ -270,9 +275,15 @@ def buscar_fechamentos_gmail(ano_mes: str) -> list[dict]:
         if not html:
             continue
 
-        data_fechamento = _parse_data_pt(html)
-        if not data_fechamento:
+        data_email, hora_fechamento = _parse_data_hora_pt(html)
+        if not data_email:
             continue
+
+        # Fechamentos antes das 11h referem-se ao caixa do dia anterior
+        if hora_fechamento < 11:
+            data_fechamento = data_email - timedelta(days=1)
+        else:
+            data_fechamento = data_email
 
         lancamentos = _parse_email_html(html, data_fechamento)
         todos.extend(lancamentos)
