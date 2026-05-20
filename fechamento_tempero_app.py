@@ -831,7 +831,8 @@ with tab4:
             }
 
             def _periodo_to_dt(periodo):
-                s = str(periodo).strip().lower()
+                # normaliza para remover acentos (ex: "Março" → "marco")
+                s = normalizar_texto(str(periodo).strip()).lower()
                 m = re.search(r"(\d{4})-(\d{2})", s)
                 if m:
                     y, mm = int(m.group(1)), int(m.group(2))
@@ -855,16 +856,40 @@ with tab4:
                 df_chart = df_chart.dropna(subset=["ordem"]).sort_values("ordem")
             period_order = df_chart["Período"].tolist()
 
-            chart = (
+            _zero = alt.Chart(pd.DataFrame({"y": [0]})).mark_rule(
+                color="#aaaaaa", strokeDash=[4, 4]
+            ).encode(y="y:Q")
+
+            _line = (
                 alt.Chart(df_chart)
-                .mark_bar()
+                .mark_line(color="#d63384", strokeWidth=2.5)
                 .encode(
                     x=alt.X("Período:N", sort=period_order, title=None),
                     y=alt.Y("Resultado:Q", title=None),
-                    tooltip=[alt.Tooltip("Período:N"), alt.Tooltip("Resultado:Q", format=",.2f")],
                 )
-                .properties(height=320)
             )
+            _points = (
+                alt.Chart(df_chart)
+                .mark_point(color="#d63384", filled=True, size=80)
+                .encode(
+                    x=alt.X("Período:N", sort=period_order, title=None),
+                    y=alt.Y("Resultado:Q", title=None),
+                    tooltip=[
+                        alt.Tooltip("Período:N", title="Período"),
+                        alt.Tooltip("Resultado:Q", title="Resultado (R$)", format=",.2f"),
+                    ],
+                )
+            )
+            _labels = (
+                alt.Chart(df_chart)
+                .mark_text(dy=-14, fontSize=11, color="#555555")
+                .encode(
+                    x=alt.X("Período:N", sort=period_order),
+                    y=alt.Y("Resultado:Q"),
+                    text=alt.Text("Resultado:Q", format=",.0f"),
+                )
+            )
+            chart = (_zero + _line + _points + _labels).properties(height=320)
             st.altair_chart(chart, use_container_width=True)
 
         st.markdown("---")
