@@ -376,9 +376,11 @@ with tab1:
 
     if df_dinheiro_periodo.empty:
         df_dinheiro_periodo = pd.DataFrame(
-            [{"Data": datetime.today().date(), "Descrição": "", "Tipo": "Entrada", "Valor": 0.0}],
+            [{"Data": pd.Timestamp.today().normalize(), "Descrição": "", "Tipo": "Entrada", "Valor": 0.0}],
             columns=["Data", "Descrição", "Tipo", "Valor"],
         )
+
+    df_dinheiro_periodo["Data"] = pd.to_datetime(df_dinheiro_periodo["Data"], errors="coerce")
 
     df_dinheiro_ui = st.data_editor(
         df_dinheiro_periodo,
@@ -386,7 +388,6 @@ with tab1:
         hide_index=True,
         use_container_width=True,
         column_config={
-            "Data": st.column_config.DateColumn("Data"),
             "Descrição": st.column_config.TextColumn("Descrição"),
             "Tipo": st.column_config.SelectboxColumn("Tipo", options=["Entrada", "Saída"], required=True),
             "Valor": st.column_config.NumberColumn("Valor (R$)", step=0.01, min_value=0.0),
