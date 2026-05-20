@@ -390,6 +390,7 @@ with tab1:
         hide_index=True,
         use_container_width=True,
         column_config={
+            "Data": st.column_config.DateColumn("Data"),
             "Descrição": st.column_config.TextColumn("Descrição"),
             "Tipo": st.column_config.SelectboxColumn("Tipo", options=["Entrada", "Saída"], required=True),
             "Valor": st.column_config.NumberColumn("Valor (R$)", step=0.01, min_value=0.0),
@@ -675,9 +676,13 @@ with tab3:
             if df_mov_h.empty:
                 st.info("Este relatório não possui a aba **Movimentos**.")
             else:
-                if "Data" in df_mov_h.columns:
-                    df_mov_h["Data"] = pd.to_datetime(df_mov_h["Data"], errors="coerce")
-                st.dataframe(df_mov_h, use_container_width=True)
+                df_mov_h_display = df_mov_h.copy()
+                if "Data" in df_mov_h_display.columns:
+                    df_mov_h_display["Data"] = (
+                        pd.to_datetime(df_mov_h_display["Data"], errors="coerce")
+                        .dt.strftime("%d/%m/%Y")
+                    )
+                st.dataframe(df_mov_h_display, use_container_width=True)
 
         st.markdown("---")
         st.caption("Fonte: Histórico (Drive) — visualização somente leitura")
@@ -723,9 +728,10 @@ with tab3:
                 use_container_width=True,
                 num_rows="fixed",
                 column_config={
+                    "Data": st.column_config.DateColumn("Data"),
                     "Categoria": st.column_config.SelectboxColumn(
                         "Categoria", options=categorias_possiveis, help="Ajuste a categoria se necessário."
-                    )
+                    ),
                 },
             )
 
