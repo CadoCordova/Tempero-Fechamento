@@ -107,7 +107,8 @@ def get_ano_mes(nome_periodo: str) -> str | None:
     """
     Extrai YYYY-MM a partir de várias formas de nome de período:
       - "YYYY-MM …"
-      - "Mês AAAA …"  (pt-BR)
+      - "Mês AAAA …"  (pt-BR, início ou embutido com separador _/-)
+      - "AAAA Mês …"  (pt-BR, embutido com separador _/-)
       - "MM/YYYY …"
     """
     if not nome_periodo:
@@ -124,13 +125,17 @@ def get_ano_mes(nome_periodo: str) -> str | None:
         except ValueError:
             pass
 
-    # 2) "Mês AAAA" no início
-    norm = normalizar_texto(s)
-    m2 = re.match(r"^([A-Z]+)\s+(\d{4})", norm)
-    if m2:
-        mes_num = _MESES_PT.get(m2.group(1).lower())
-        if mes_num:
-            return f"{m2.group(2)}-{mes_num}"
+    # 2) nome do mês + ano ou ano + nome do mês (qualquer separador: espaço, _, -)
+    norm = normalizar_texto(s).lower()
+    for mes_nome, mes_num in _MESES_PT.items():
+        # "marco_2026", "marco-2026", "marco 2026"
+        m2 = re.search(rf"(?<![a-z]){mes_nome}[\s_-]+(\d{{4}})(?!\d)", norm)
+        if m2:
+            return f"{m2.group(1)}-{mes_num}"
+        # "2026_marco", "2026-marco", "2026 marco"
+        m2b = re.search(rf"(?<!\d)(\d{{4}})[\s_-]+{mes_nome}(?![a-z])", norm)
+        if m2b:
+            return f"{m2b.group(1)}-{mes_num}"
 
     # 3) MM/YYYY
     m3 = re.search(r"(\d{2})/(\d{4})", s)
