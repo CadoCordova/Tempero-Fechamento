@@ -407,7 +407,10 @@ with tab1:
     if salvar_caixa:
         try:
             save_cash_to_gdrive(_ano_mes_caixa, df_din_limpo)
-            st.session_state["df_caixa_mes"] = df_din_limpo.copy()
+            _df_save = df_din_limpo.copy()
+            if not _df_save.empty and "Data" in _df_save.columns:
+                _df_save["Data"] = pd.to_datetime(_df_save["Data"], errors="coerce").dt.date
+            st.session_state["df_caixa_mes"] = _df_save
             st.session_state["cash_loaded_for"] = _cache_key
             st.success("Lançamentos de dinheiro salvos com sucesso no Google Drive!")
             st.rerun()
