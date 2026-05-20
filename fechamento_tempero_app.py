@@ -148,9 +148,18 @@ if st.session_state.get("auth_ok"):
 
 ano_mes_ref = get_ano_mes(nome_periodo) or datetime.today().strftime("%Y-%m")
 
-if st.session_state.get("cash_loaded_for") != ano_mes_ref:
-    st.session_state["df_caixa_mes"] = load_cash_from_gdrive(ano_mes_ref)
-    st.session_state["cash_loaded_for"] = ano_mes_ref
+# Quando o usuário visualiza um relatório histórico, o caixa deve refletir
+# o mês daquele relatório, não o mês do campo "Nome do período".
+_hist_nome = st.session_state.get("hist_report_name")
+if st.session_state.get("fonte_dados_global") == "Histórico (Drive)" and _hist_nome:
+    _ano_mes_caixa = get_ano_mes(_hist_nome) or ano_mes_ref
+else:
+    _ano_mes_caixa = ano_mes_ref
+
+_cache_key = f"{st.session_state.get('fonte_dados_global','upload')}|{_ano_mes_caixa}"
+if st.session_state.get("cash_loaded_for") != _cache_key:
+    st.session_state["df_caixa_mes"] = load_cash_from_gdrive(_ano_mes_caixa)
+    st.session_state["cash_loaded_for"] = _cache_key
 
 df_dinheiro_periodo = st.session_state["df_caixa_mes"].copy()
 
@@ -378,7 +387,7 @@ with tab1:
             "Tipo": st.column_config.SelectboxColumn("Tipo", options=["Entrada", "Saída"], required=True),
             "Valor": st.column_config.NumberColumn("Valor (R$)", step=0.01, min_value=0.0),
         },
-        key=f"editor_dinheiro_{ano_mes_ref or 'padrao'}",
+        key=f"editor_dinheiro_{_ano_mes_caixa or 'padrao'}",
     )
 
     df_din_limpo = df_dinheiro_ui.copy()
@@ -393,9 +402,9 @@ with tab1:
 
     if salvar_caixa:
         try:
-            save_cash_to_gdrive(ano_mes_ref, df_din_limpo)
+            save_cash_to_gdrive(_ano_mes_caixa, df_din_limpo)
             st.session_state["df_caixa_mes"] = df_din_limpo.copy()
-            st.session_state["cash_loaded_for"] = ano_mes_ref
+            st.session_state["cash_loaded_for"] = _cache_key
             st.success("Lançamentos de dinheiro salvos com sucesso no Google Drive!")
             st.rerun()
         except Exception as e:
@@ -405,13 +414,13 @@ with tab1:
     with st.expander("📥 Importar do Gmail (Suitable)"):
         st.markdown(
             "Busca os emails de **Fechamento de caixa** do Suitable "
-            f"para o período **{ano_mes_ref}** e importa os lançamentos em dinheiro."
+            f"para o período **{_ano_mes_caixa}** e importa os lançamentos em dinheiro."
         )
 
         if st.button("🔍 Buscar fechamentos do Gmail", key="btn_buscar_gmail"):
             with st.spinner("Buscando emails..."):
                 try:
-                    preview = buscar_fechamentos_gmail(ano_mes_ref)
+                    preview = buscar_fechamentos_gmail(_ano_mes_caixa)
                     st.session_state["gmail_preview"] = preview
                 except RuntimeError as e:
                     st.error(str(e))
@@ -423,9 +432,9 @@ with tab1:
         preview = st.session_state.get("gmail_preview")
         if preview is not None:
             if not preview:
-                st.info(f"Nenhum lançamento encontrado nos emails de {ano_mes_ref}.")
+                st.info(f"Nenhum lançamento encontrado nos emails de {_ano_mes_caixa}.")
             else:
-                st.success(f"**{len(preview)} lançamento(s)** encontrado(s) para {ano_mes_ref}:")
+                st.success(f"**{len(preview)} lançamento(s)** encontrado(s) para {_ano_mes_caixa}:")
 
                 df_prev = pd.DataFrame(preview)
                 df_prev["Data"] = pd.to_datetime(df_prev["Data"]).dt.strftime("%d/%m/%Y")
@@ -436,7 +445,7 @@ with tab1:
                     with st.spinner("Importando..."):
                         try:
                             inseridos, duplicatas = lancar_importados_gmail(
-                                ano_mes_ref, st.session_state["gmail_preview"]
+                                _ano_mes_caixa, st.session_state["gmail_preview"]
                             )
                             # Recarrega caixa na sessão
                             st.session_state.pop("df_caixa_mes", None)
