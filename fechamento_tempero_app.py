@@ -271,6 +271,8 @@ if arquivo_itau and arquivo_pag:
                 for mov in movimentos
             ]
             df_mov = pd.DataFrame(movimentos_cat)
+            if not df_mov.empty and "Data" in df_mov.columns:
+                df_mov["Data"] = pd.to_datetime(df_mov["Data"], errors="coerce")
 
             entradas_cat: dict[str, float] = defaultdict(float)
             saidas_cat: dict[str, float] = defaultdict(float)
@@ -673,6 +675,8 @@ with tab3:
             if df_mov_h.empty:
                 st.info("Este relatório não possui a aba **Movimentos**.")
             else:
+                if "Data" in df_mov_h.columns:
+                    df_mov_h["Data"] = pd.to_datetime(df_mov_h["Data"], errors="coerce")
                 st.dataframe(df_mov_h, use_container_width=True)
 
         st.markdown("---")
