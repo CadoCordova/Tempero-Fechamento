@@ -52,7 +52,7 @@ def load_cash_from_gdrive(ano_mes_ref: str | None) -> pd.DataFrame:
             if col not in df.columns:
                 df[col] = None
         if "Data" in df.columns:
-            df["Data"] = pd.to_datetime(df["Data"], errors="coerce").dt.date
+            df["Data"] = pd.to_datetime(df["Data"], errors="coerce")
         return df[_cols]
     except Exception as e:
         import streamlit as st

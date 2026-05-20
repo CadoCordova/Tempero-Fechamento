@@ -165,7 +165,7 @@ df_dinheiro_periodo = st.session_state["df_caixa_mes"].copy()
 if not df_dinheiro_periodo.empty and "Data" in df_dinheiro_periodo.columns:
     df_dinheiro_periodo["Data"] = pd.to_datetime(
         df_dinheiro_periodo["Data"], errors="coerce"
-    ).dt.date
+    )
 
 # ========================
 #  Cálculos principais (modo Upload)
@@ -409,7 +409,7 @@ with tab1:
             save_cash_to_gdrive(_ano_mes_caixa, df_din_limpo)
             _df_save = df_din_limpo.copy()
             if not _df_save.empty and "Data" in _df_save.columns:
-                _df_save["Data"] = pd.to_datetime(_df_save["Data"], errors="coerce").dt.date
+                _df_save["Data"] = pd.to_datetime(_df_save["Data"], errors="coerce")
             st.session_state["df_caixa_mes"] = _df_save
             st.session_state["cash_loaded_for"] = _cache_key
             st.success("Lançamentos de dinheiro salvos com sucesso no Google Drive!")
