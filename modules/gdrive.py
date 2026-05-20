@@ -251,6 +251,8 @@ def load_fechamento_report_from_gdrive(file_id: str) -> dict:
         df_resumo_contas = df_resumo_raw[
             df_resumo_raw["Conta"].isin(["Itaú", "PagSeguro", "Dinheiro"])
         ].copy()
+        _cols_resumo = [c for c in ["Conta", "Entradas", "Saídas", "Resultado"] if c in df_resumo_contas.columns]
+        df_resumo_contas = df_resumo_contas[_cols_resumo]
     else:
         df_resumo_contas = pd.DataFrame()
 
