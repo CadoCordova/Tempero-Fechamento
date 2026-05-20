@@ -162,6 +162,10 @@ if st.session_state.get("cash_loaded_for") != _cache_key:
     st.session_state["cash_loaded_for"] = _cache_key
 
 df_dinheiro_periodo = st.session_state["df_caixa_mes"].copy()
+if not df_dinheiro_periodo.empty and "Data" in df_dinheiro_periodo.columns:
+    df_dinheiro_periodo["Data"] = pd.to_datetime(
+        df_dinheiro_periodo["Data"], errors="coerce"
+    ).dt.date
 
 # ========================
 #  Cálculos principais (modo Upload)
