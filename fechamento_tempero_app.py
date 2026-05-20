@@ -164,7 +164,7 @@ if st.session_state.get("cash_loaded_for") != _cache_key:
 df_dinheiro_periodo = st.session_state["df_caixa_mes"].copy()
 if not df_dinheiro_periodo.empty and "Data" in df_dinheiro_periodo.columns:
     df_dinheiro_periodo["Data"] = pd.to_datetime(
-        df_dinheiro_periodo["Data"], errors="coerce"
+        df_dinheiro_periodo["Data"], dayfirst=True, errors="coerce"
     )
 
 # ========================
@@ -272,7 +272,7 @@ if arquivo_itau and arquivo_pag:
             ]
             df_mov = pd.DataFrame(movimentos_cat)
             if not df_mov.empty and "Data" in df_mov.columns:
-                df_mov["Data"] = pd.to_datetime(df_mov["Data"], errors="coerce")
+                df_mov["Data"] = pd.to_datetime(df_mov["Data"], dayfirst=True, errors="coerce")
 
             entradas_cat: dict[str, float] = defaultdict(float)
             saidas_cat: dict[str, float] = defaultdict(float)
@@ -679,8 +679,9 @@ with tab3:
                 df_mov_h_display = df_mov_h.copy()
                 if "Data" in df_mov_h_display.columns:
                     df_mov_h_display["Data"] = (
-                        pd.to_datetime(df_mov_h_display["Data"], errors="coerce")
+                        pd.to_datetime(df_mov_h_display["Data"], dayfirst=True, errors="coerce")
                         .dt.strftime("%d/%m/%Y")
+                        .fillna("")
                     )
                 st.dataframe(df_mov_h_display, use_container_width=True)
 
