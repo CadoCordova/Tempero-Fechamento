@@ -37,6 +37,7 @@ from modules.gdrive import (
 from modules.ui import inject_css, metric_card_html
 from modules.utils import format_currency, get_ano_mes, normalizar_texto, parse_numero_br, slugify
 from modules.validacao import exibir_painel_validacao, validar_consistencia_fechamento
+from modules.controle_anual import carregar_dre_anual, calcular_cmv, gerar_alertas
 
 # ========================
 #  Config Streamlit
@@ -356,11 +357,12 @@ if arquivo_itau and arquivo_pag:
 #  Abas
 # ========================
 
-tab1, tab2, tab3, tab4 = st.tabs([
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "💵 Caixa Diário",
     "💗 Fechamento Mensal",
     "🧾 Conferência & Categorias",
     "📊 Histórico & Comparativos",
+    "📅 Controle Anual",
 ])
 
 
@@ -946,3 +948,130 @@ with tab4:
                         st.rerun()
 
         st.markdown("</div>", unsafe_allow_html=True)
+
+
+# ---------- ABA 5: Controle Anual ----------
+
+with tab5:
+    require_role("admin")
+
+    st.markdown('<div class="tempero-section-title">📅 Controle Anual</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="tempero-section-sub">DRE mensal comparativo gerado automaticamente a partir dos fechamentos salvos no Drive.</div>',
+        unsafe_allow_html=True,
+    )
+
+    with st.spinner("Carregando fechamentos do Drive..."):
+        try:
+            resultado_anual = carregar_dre_anual()
+            if len(resultado_anual) == 3:
+                meses_anual, linhas_dre, resumos_anual = resultado_anual
+            else:
+                meses_anual, linhas_dre, resumos_anual = [], [], {}
+        except Exception as e:
+            st.error(f"Erro ao carregar dados anuais: {e}")
+            meses_anual, linhas_dre, resumos_anual = [], [], {}
+
+    if not meses_anual:
+        st.info("Nenhum fechamento encontrado no Drive. Salve ao menos um fechamento para ver o controle anual.")
+    else:
+        # Monta dados de categorias para alertas e CMV
+        _dados_cats_anual = {}
+        for linha in linhas_dre:
+            cat = linha["Categoria"]
+            if cat == "__ Resultado __":
+                continue
+            for mes in meses_anual:
+                if mes not in _dados_cats_anual:
+                    _dados_cats_anual[mes] = {}
+                _dados_cats_anual[mes][cat] = linha.get(mes, 0.0)
+
+        # --- Cards de resumo ---
+        receita_total = sum(
+            abs(_dados_cats_anual.get(m, {}).get("Vendas / Receitas", 0.0))
+            for m in meses_anual
+        )
+        resultado_acumulado = sum(resumos_anual.get(m, {}).get("resultado", 0.0) for m in meses_anual)
+        invest_acumulado = sum(
+            abs(_dados_cats_anual.get(m, {}).get("Investimentos (Aplicações)", 0.0))
+            for m in meses_anual
+        )
+        resultado_operacional = resultado_acumulado + invest_acumulado
+
+        melhor_mes = max(meses_anual, key=lambda m: resumos_anual.get(m, {}).get("resultado", float("-inf")))
+        pior_mes = min(meses_anual, key=lambda m: resumos_anual.get(m, {}).get("resultado", float("inf")))
+
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.markdown(metric_card_html("Receita acumulada", format_currency(receita_total)), unsafe_allow_html=True)
+        with col2:
+            st.markdown(metric_card_html("Resultado acumulado", format_currency(resultado_acumulado)), unsafe_allow_html=True)
+        with col3:
+            res_melhor = resumos_anual.get(melhor_mes, {}).get("resultado", 0.0)
+            st.markdown(metric_card_html(f"Melhor mês ({melhor_mes})", format_currency(res_melhor)), unsafe_allow_html=True)
+        with col4:
+            res_pior = resumos_anual.get(pior_mes, {}).get("resultado", 0.0)
+            st.markdown(metric_card_html(f"Pior mês ({pior_mes})", format_currency(res_pior)), unsafe_allow_html=True)
+
+        st.caption(f"Resultado operacional real (ex-investimentos): {format_currency(resultado_operacional)}")
+
+        st.markdown("---")
+
+        # --- DRE mensal ---
+        st.markdown('<div class="tempero-section-title">DRE mensal por categoria</div>', unsafe_allow_html=True)
+
+        df_dre = pd.DataFrame(linhas_dre)
+        df_dre_display = df_dre.copy()
+        for mes in meses_anual:
+            df_dre_display[mes] = df_dre_display[mes].apply(
+                lambda x: format_currency(x) if isinstance(x, (int, float)) and x != 0.0 else "—"
+            )
+
+        st.dataframe(
+            df_dre_display.set_index("Categoria"),
+            use_container_width=True,
+        )
+
+        st.markdown("---")
+
+        # --- Barra de CMV ---
+        st.markdown('<div class="tempero-section-title">CMV — custo de insumos sobre receita</div>', unsafe_allow_html=True)
+
+        cmv_por_mes = calcular_cmv(resumos_anual, _dados_cats_anual)
+        for mes in meses_anual:
+            cmv = cmv_por_mes.get(mes)
+            if cmv is None:
+                continue
+            perc = cmv * 100
+            if perc > 32:
+                label_cor = "🔴"
+            elif perc > 28:
+                label_cor = "🟡"
+            else:
+                label_cor = "🟢"
+
+            st.markdown(
+                f"**{mes}** {label_cor} &nbsp; `{perc:.1f}%`",
+                unsafe_allow_html=True,
+            )
+            st.progress(min(perc / 50, 1.0))  # escala: 50% = barra cheia
+
+        st.caption("Referência saudável para marmitarias: 28–32%")
+
+        st.markdown("---")
+
+        # --- Alertas automáticos ---
+        st.markdown('<div class="tempero-section-title">Alertas do período</div>', unsafe_allow_html=True)
+
+        alertas = gerar_alertas(meses_anual, resumos_anual, _dados_cats_anual)
+
+        if not alertas:
+            st.success("Nenhum alerta encontrado. Todos os indicadores dentro do esperado.")
+        else:
+            for alerta in alertas:
+                if alerta["tipo"] == "erro":
+                    st.error(alerta["texto"])
+                elif alerta["tipo"] == "aviso":
+                    st.warning(alerta["texto"])
+                else:
+                    st.success(alerta["texto"])
