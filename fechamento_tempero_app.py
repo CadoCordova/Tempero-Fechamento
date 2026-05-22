@@ -998,22 +998,18 @@ with tab5:
         )
         resultado_operacional = resultado_acumulado + invest_acumulado
 
-        melhor_mes = max(meses_anual, key=lambda m: resumos_anual.get(m, {}).get("resultado", float("-inf")))
-        pior_mes = min(meses_anual, key=lambda m: resumos_anual.get(m, {}).get("resultado", float("inf")))
+        n_meses = len(meses_anual) or 1
+        media_resultado = resultado_operacional / n_meses
 
         col1, col2, col3, col4 = st.columns(4)
         with col1:
-            st.markdown(metric_card_html("Receita acumulada", format_currency(receita_total)), unsafe_allow_html=True)
+            st.markdown(metric_card_html("Receita do ano", format_currency(receita_total)), unsafe_allow_html=True)
         with col2:
-            st.markdown(metric_card_html("Resultado acumulado", format_currency(resultado_acumulado)), unsafe_allow_html=True)
+            st.markdown(metric_card_html("Sobra média por mês", format_currency(media_resultado)), unsafe_allow_html=True)
         with col3:
-            res_melhor = resumos_anual.get(melhor_mes, {}).get("resultado", 0.0)
-            st.markdown(metric_card_html(f"Melhor mês ({melhor_mes})", format_currency(res_melhor)), unsafe_allow_html=True)
+            st.markdown(metric_card_html("Sobrou no ano", format_currency(resultado_operacional)), unsafe_allow_html=True)
         with col4:
-            res_pior = resumos_anual.get(pior_mes, {}).get("resultado", 0.0)
-            st.markdown(metric_card_html(f"Pior mês ({pior_mes})", format_currency(res_pior)), unsafe_allow_html=True)
-
-        st.caption(f"Resultado operacional real (ex-investimentos): {format_currency(resultado_operacional)}")
+            st.markdown(metric_card_html("Investido no ano", format_currency(invest_acumulado)), unsafe_allow_html=True)
 
         st.markdown("---")
 
