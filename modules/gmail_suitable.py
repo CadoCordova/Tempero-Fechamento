@@ -92,26 +92,44 @@ def _get_gmail_service():
 
 def _parse_data_hora_pt(texto: str) -> tuple[date, int] | tuple[None, None]:
     """
-    Extrai data e hora do padrão "DD de Mês de YYYY às HH:MM" (pt-BR).
-    Retorna (date, hora_int) ou (None, None) se não encontrar.
-    A hora é usada para aplicar a regra de dia anterior (< 11h).
+    Aceita a data por extenso do relatório antigo e o intervalo MOVIMENTO
+    do relatório novo. Usa a data/hora FINAL do intervalo.
+    Retorna (date, hora_int) ou (None, None) se a data/hora for inválida.
+    Sem hora no formato antigo, retorna 11 para preservar a regra original.
     """
+    from bs4 import BeautifulSoup
+
+    # Tags e entidades HTML podem separar os componentes do cabeçalho.
+    texto = BeautifulSoup(texto, "html.parser").get_text(" ", strip=True)
+    texto = " ".join(texto.split())
+
     m = re.search(
-        r"(\d{1,2})\s+de\s+(\w+)\s+de\s+(\d{4})(?:\s+[àa]s?\s+(\d{1,2}):\d{2})?",
+        r"\bDE\s+\d{1,2}/\d{1,2}/\d{4}\s+\d{1,2}:\d{2}"
+        r"\s+A\s+(\d{1,2})/(\d{1,2})/(\d{4})\s+(\d{1,2}):(\d{2})\b",
         texto, re.IGNORECASE,
     )
-    if not m:
+    if m:
+        dia, mes, ano, hora, minuto = map(int, m.groups())
+    else:
+        m = re.search(
+            r"(\d{1,2})\s+de\s+(\w+)\s+de\s+(\d{4})"
+            r"(?:\s+[àa]s?\s+(\d{1,2}):(\d{2}))?",
+            texto, re.IGNORECASE,
+        )
+        if not m:
+            return None, None
+
+        dia = int(m.group(1))
+        mes_txt = unicodedata.normalize("NFD", m.group(2).lower()).encode("ascii", "ignore").decode("ascii")
+        mes = _MESES_PT.get(mes_txt)
+        if not mes:
+            return None, None
+        ano = int(m.group(3))
+        hora = int(m.group(4)) if m.group(4) is not None else 11
+        minuto = int(m.group(5)) if m.group(5) is not None else 0
+
+    if not (0 <= hora <= 23 and 0 <= minuto <= 59):
         return None, None
-
-    dia = int(m.group(1))
-    mes_txt = unicodedata.normalize("NFD", m.group(2).lower()).encode("ascii", "ignore").decode("ascii")
-    ano = int(m.group(3))
-    hora = int(m.group(4)) if m.group(4) is not None else 11  # sem hora → não aplica regra
-
-    mes = _MESES_PT.get(mes_txt)
-    if not mes:
-        return None, None
-
     try:
         return date(ano, mes, dia), hora
     except ValueError:
