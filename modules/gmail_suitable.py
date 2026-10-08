@@ -171,7 +171,8 @@ def _parse_email_html(html: str, data_fechamento: date) -> list[dict]:
     Extrai lançamentos de dinheiro do HTML de um email do Suitable.
 
     Tabelas reconhecidas:
-    - "Total por forma de Pagamento" → linha Dinheiro → Entrada
+    - "Total por forma de Pagamento" → linha Dinheiro → Entrada (antigo)
+    - "Pedidos por Meio de Pagamento" → linha (+) DINHEIRO → Entrada (novo)
     - "Contas Pagas" → cada linha (exceto total) → Saída individual
     """
     from bs4 import BeautifulSoup
@@ -197,9 +198,10 @@ def _parse_email_html(html: str, data_fechamento: date) -> list[dict]:
                 contexto = txt
                 break
 
-        # Identifica APENAS "Total por forma de Pagamento" — exclui "Saldos de Fechamento"
+        # Reconhece as tabelas de vendas dos dois formatos.
+        # Saldos de fechamento não representam vendas em dinheiro.
         is_total_pagamento = (
-            "total por forma" in contexto
+            ("total por forma" in contexto or "pedidos por meio de pagamento" in contexto)
             and "saldo" not in contexto
         )
         is_contas = "contas pagas" in contexto
@@ -214,9 +216,10 @@ def _parse_email_html(html: str, data_fechamento: date) -> list[dict]:
                 cols = row.find_all(["td", "th"])
                 if len(cols) <= max(forma_idx, valor_idx):
                     continue
-                forma = cols[forma_idx].get_text(strip=True).lower()
-                # Ignora linha "Saldo anterior" e qualquer linha que não seja Dinheiro
-                if "dinheiro" not in forma:
+                forma = " ".join(cols[forma_idx].get_text(" ", strip=True).lower().split())
+                # No formato novo há também pagamentos e saldo em dinheiro.
+                # Somente Dinheiro / (+) DINHEIRO representam vendas.
+                if not re.fullmatch(r"(?:\(\+\)\s*)?dinheiro", forma):
                     continue
                 valor = parse_numero_br(cols[valor_idx].get_text(strip=True))
                 if valor > 0:
