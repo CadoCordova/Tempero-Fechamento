@@ -198,10 +198,11 @@ def _parse_email_html(html: str, data_fechamento: date) -> list[dict]:
                 contexto = txt
                 break
 
+        is_pedidos = "pedidos por meio de pagamento" in contexto
         # Reconhece as tabelas de vendas dos dois formatos.
         # Saldos de fechamento não representam vendas em dinheiro.
         is_total_pagamento = (
-            ("total por forma" in contexto or "pedidos por meio de pagamento" in contexto)
+            ("total por forma" in contexto or is_pedidos)
             and "saldo" not in contexto
         )
         is_contas = "contas pagas" in contexto
@@ -212,8 +213,16 @@ def _parse_email_html(html: str, data_fechamento: date) -> list[dict]:
                 (i for i, h in enumerate(headers) if "forma" in h or "pagamento" in h), 0
             )
 
+            secao = ""
             for row in rows[1:]:
                 cols = row.find_all(["td", "th"])
+                if is_pedidos and len(cols) == 1:
+                    secao = " ".join(cols[0].get_text(" ", strip=True).lower().split())
+                    continue
+                # O novo relatório repete (+) Dinheiro em Recebimentos em Cartão.
+                # Importa exclusivamente a linha da seção Recebimentos em Dinheiro.
+                if is_pedidos and secao != "recebimentos em dinheiro":
+                    continue
                 if len(cols) <= max(forma_idx, valor_idx):
                     continue
                 forma = " ".join(cols[forma_idx].get_text(" ", strip=True).lower().split())
