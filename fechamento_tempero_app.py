@@ -13,7 +13,7 @@ from openpyxl.styles import Alignment, Font
 
 from modules.auth import check_auth, current_role, current_user, has_role, require_role
 from modules.caixa import lancar_importados_gmail, load_cash_from_gdrive, save_cash_to_gdrive
-from modules.gmail_suitable import buscar_fechamentos_gmail
+from modules.gmail_suitable import buscar_fechamentos_gmail_com_info
 from modules.categorias import (
     CATEGORIAS_PADRAO,
     carregar_categorias_personalizadas,
@@ -433,8 +433,9 @@ with tab1:
         if st.button("🔍 Buscar fechamentos do Gmail", key="btn_buscar_gmail"):
             with st.spinner("Buscando emails..."):
                 try:
-                    preview = buscar_fechamentos_gmail(_ano_mes_caixa)
+                    preview, info_gmail = buscar_fechamentos_gmail_com_info(_ano_mes_caixa)
                     st.session_state["gmail_preview"] = preview
+                    st.session_state["gmail_info"] = info_gmail
                 except RuntimeError as e:
                     st.error(str(e))
                     st.session_state.pop("gmail_preview", None)
@@ -443,6 +444,8 @@ with tab1:
                     st.session_state.pop("gmail_preview", None)
 
         preview = st.session_state.get("gmail_preview")
+        for _aviso in (st.session_state.get("gmail_info") or {}).get("avisos", []):
+            st.warning(_aviso)
         if preview is not None:
             if not preview:
                 st.info(f"Nenhum lançamento encontrado nos emails de {_ano_mes_caixa}.")
@@ -487,6 +490,17 @@ with tab1:
         st.write("Saídas em dinheiro no período:", format_currency(-saidas_d) if saidas_d else "R$ 0,00")
     with col_c3:
         st.write("Saldo do dinheiro no período:", format_currency(entradas_d - saidas_d))
+
+    # Conferência com o saldo da gaveta informado no último email do Suitable.
+    # Saldo do período (fluxo) + saldo inicial do mês = saldo da gaveta.
+    _ult = (st.session_state.get("gmail_info") or {}).get("ultimo_saldo")
+    if _ult:
+        _dt_ult, _saldo_gaveta = _ult
+        st.caption(
+            f"Gaveta segundo o email do Suitable de {_dt_ult:%d/%m/%Y}: {format_currency(_saldo_gaveta)}. "
+            f"Saldo inicial implícito (gaveta − saldo do período): {format_currency(_saldo_gaveta - (entradas_d - saidas_d))}. "
+            "Esse valor deve ser igual ao saldo inicial do 1º fechamento do mês."
+        )
 
 
 # ---------- ABA 2: Fechamento Mensal ----------

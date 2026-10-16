@@ -214,23 +214,42 @@ def _parse_email_html(html: str, data_fechamento: date) -> list[dict]:
             )
 
             secao = ""
+            din_secao = 0.0   # linha (+) DINHEIRO da seção Recebimentos em Dinheiro
+            recebimento_off = 0.0  # Recebimento OFF (não é dinheiro na gaveta)
             for row in rows[1:]:
                 cols = row.find_all(["td", "th"])
                 if is_pedidos and len(cols) == 1:
                     secao = " ".join(cols[0].get_text(" ", strip=True).lower().split())
                     continue
+                if len(cols) <= max(forma_idx, valor_idx):
+                    continue
+                forma = " ".join(cols[forma_idx].get_text(" ", strip=True).lower().split())
+                # O novo relatório soma o "Recebimento OFF" na linha (+) DINHEIRO,
+                # mas esse valor não entra na gaveta. Lê o OFF para descontá-lo.
+                if is_pedidos and re.fullmatch(r"(?:\(\+\)\s*)?recebimento off", forma):
+                    recebimento_off += parse_numero_br(cols[valor_idx].get_text(strip=True))
+                    continue
                 # O novo relatório repete (+) Dinheiro em Recebimentos em Cartão.
                 # Importa exclusivamente a linha da seção Recebimentos em Dinheiro.
                 if is_pedidos and secao != "recebimentos em dinheiro":
                     continue
-                if len(cols) <= max(forma_idx, valor_idx):
-                    continue
-                forma = " ".join(cols[forma_idx].get_text(" ", strip=True).lower().split())
                 # No formato novo há também pagamentos e saldo em dinheiro.
                 # Somente Dinheiro / (+) DINHEIRO representam vendas.
                 if not re.fullmatch(r"(?:\(\+\)\s*)?dinheiro", forma):
                     continue
                 valor = parse_numero_br(cols[valor_idx].get_text(strip=True))
+                if is_pedidos:
+                    din_secao += valor
+                elif valor > 0:
+                    lancamentos.append({
+                        "Data": data_fechamento,
+                        "Descrição": "Vendas em dinheiro (Suitable)",
+                        "Tipo": "Entrada",
+                        "Valor": valor,
+                    })
+
+            if is_pedidos:
+                valor = round(din_secao - recebimento_off, 2)
                 if valor > 0:
                     lancamentos.append({
                         "Data": data_fechamento,
@@ -262,12 +281,55 @@ def _parse_email_html(html: str, data_fechamento: date) -> list[dict]:
     return lancamentos
 
 
+def _extrair_info_caixa(html: str) -> dict:
+    """
+    Extrai do email (sem gerar lançamentos):
+    - recebimento_off: valor de "Recebimento OFF" (venda que não entrou na gaveta)
+    - saldo_dinheiro: "Dinheiro" (valor esperado) da tabela "Saldos de Fechamento
+      por Forma de Pagamento" = dinheiro físico na gaveta ao fechar.
+    """
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(html, "html.parser")
+    info = {"recebimento_off": 0.0, "saldo_dinheiro": None}
+    for table in soup.find_all("table"):
+        rows = table.find_all("tr")
+        if len(rows) < 2:
+            continue
+        contexto = ""
+        for prev in table.find_all_previous(["h1", "h2", "h3", "h4", "p", "strong", "b"], limit=3):
+            txt = prev.get_text(strip=True).lower()
+            if txt:
+                contexto = txt
+                break
+        for row in rows[1:]:
+            cols = row.find_all(["td", "th"])
+            if len(cols) < 2:
+                continue
+            forma = " ".join(cols[0].get_text(" ", strip=True).lower().split())
+            if "saldos de fechamento" in contexto and forma == "dinheiro":
+                info["saldo_dinheiro"] = parse_numero_br(cols[1].get_text(strip=True))
+            elif "pedidos por meio de pagamento" in contexto and re.fullmatch(
+                r"(?:\(\+\)\s*)?recebimento off", forma
+            ):
+                info["recebimento_off"] += parse_numero_br(cols[-1].get_text(strip=True))
+    return info
+
+
 # ---------------------------------------------------------------------------
 # Função principal
 # ---------------------------------------------------------------------------
 
 def buscar_fechamentos_gmail(ano_mes: str) -> list[dict]:
+    """Compatibilidade: retorna apenas os lançamentos."""
+    return buscar_fechamentos_gmail_com_info(ano_mes)[0]
+
+
+def buscar_fechamentos_gmail_com_info(ano_mes: str) -> tuple[list[dict], dict]:
     """
+    Igual a buscar_fechamentos_gmail, mas retorna também informações de conferência:
+    {"avisos": [str], "ultimo_saldo": (date, float) | None}.
+
     Busca emails de fechamento do Suitable para o mês ano_mes (YYYY-MM).
 
     Retorna lista de lançamentos no formato do caixa diário:
@@ -300,6 +362,8 @@ def buscar_fechamentos_gmail(ano_mes: str) -> list[dict]:
     messages = results.get("messages", [])
 
     todos: list[dict] = []
+    avisos: list[str] = []
+    ultimo_saldo = None
     for msg_ref in messages:
         html = _get_email_body(service, msg_ref["id"])
         if not html:
@@ -322,4 +386,17 @@ def buscar_fechamentos_gmail(ano_mes: str) -> list[dict]:
         lancamentos = _parse_email_html(html, data_fechamento)
         todos.extend(lancamentos)
 
-    return todos
+        info = _extrair_info_caixa(html)
+        if info["recebimento_off"] > 0:
+            avisos.append(
+                f"{data_fechamento:%d/%m/%Y}: Recebimento OFF de R$ {info['recebimento_off']:,.2f} "
+                "não foi lançado como dinheiro (não entrou na gaveta). Conferir com Itaú/PagSeguro."
+                .replace(",", "X").replace(".", ",").replace("X", ".")
+            )
+        if info["saldo_dinheiro"] is not None and (
+            ultimo_saldo is None or data_fechamento >= ultimo_saldo[0]
+        ):
+            ultimo_saldo = (data_fechamento, info["saldo_dinheiro"])
+
+    avisos.sort()
+    return todos, {"avisos": avisos, "ultimo_saldo": ultimo_saldo}
