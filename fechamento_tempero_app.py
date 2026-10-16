@@ -496,9 +496,11 @@ with tab1:
     _ult = (st.session_state.get("gmail_info") or {}).get("ultimo_saldo")
     if _ult:
         _dt_ult, _saldo_gaveta = _ult
+        _gav = format_currency(_saldo_gaveta).replace("$", "\\$")
+        _impl = format_currency(_saldo_gaveta - (entradas_d - saidas_d)).replace("$", "\\$")
         st.caption(
-            f"Gaveta segundo o email do Suitable de {_dt_ult:%d/%m/%Y}: {format_currency(_saldo_gaveta)}. "
-            f"Saldo inicial implícito (gaveta − saldo do período): {format_currency(_saldo_gaveta - (entradas_d - saidas_d))}. "
+            f"Gaveta segundo o email do Suitable de {_dt_ult:%d/%m/%Y}: {_gav}. "
+            f"Saldo inicial implícito (gaveta − saldo do período): {_impl}. "
             "Esse valor deve ser igual ao saldo inicial do 1º fechamento do mês."
         )
 

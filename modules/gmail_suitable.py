@@ -388,10 +388,10 @@ def buscar_fechamentos_gmail_com_info(ano_mes: str) -> tuple[list[dict], dict]:
 
         info = _extrair_info_caixa(html)
         if info["recebimento_off"] > 0:
+            _off = f"{info['recebimento_off']:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
             avisos.append(
-                f"{data_fechamento:%d/%m/%Y}: Recebimento OFF de R$ {info['recebimento_off']:,.2f} "
+                f"{data_fechamento:%d/%m/%Y}: Recebimento OFF de R\\$ {_off} "
                 "não foi lançado como dinheiro (não entrou na gaveta). Conferir com Itaú/PagSeguro."
-                .replace(",", "X").replace(".", ",").replace("X", ".")
             )
         if info["saldo_dinheiro"] is not None and (
             ultimo_saldo is None or data_fechamento >= ultimo_saldo[0]
