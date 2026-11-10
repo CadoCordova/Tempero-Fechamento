@@ -18,7 +18,9 @@ from modules.utils import parse_numero_br
 # Constantes
 # ---------------------------------------------------------------------------
 
-_REMETENTE = "envios@suitable.com.br"
+# Desde 06/11/2026 o Suitable passou a enviar de envios@mail.suitable.com.br;
+# filtrar pelo domínio cobre os dois remetentes.
+_REMETENTE = "suitable.com.br"
 _ASSUNTO = "[temperodasgurias] Fechamento de caixa"
 
 _MESES_PT = {
