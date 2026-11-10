@@ -162,6 +162,11 @@ if st.session_state.get("cash_loaded_for") != _cache_key:
     st.session_state["df_caixa_mes"] = load_cash_from_gdrive(_ano_mes_caixa)
     st.session_state["cash_loaded_for"] = _cache_key
 
+def _eh_saldo_inicial(descricao) -> bool:
+    """Linha manual de saldo inicial do caixa (não é receita do mês)."""
+    return str(descricao or "").strip().lower().startswith("saldo inicial")
+
+
 df_dinheiro_periodo = st.session_state["df_caixa_mes"].copy()
 if not df_dinheiro_periodo.empty and "Data" in df_dinheiro_periodo.columns:
     df_dinheiro_periodo["Data"] = pd.to_datetime(
@@ -236,6 +241,12 @@ if arquivo_itau and arquivo_pag:
             df_din_validos = df_dinheiro_periodo_fechar.copy()
             if not df_din_validos.empty and "Valor" in df_din_validos.columns:
                 df_din_validos = df_din_validos[df_din_validos["Valor"] > 0]
+            # Saldo inicial do caixa não é receita: fica na aba "Dinheiro" (auditoria),
+            # mas não entra em entradas, resultado nem movimentos do fechamento.
+            if not df_din_validos.empty and "Descrição" in df_din_validos.columns:
+                df_din_validos = df_din_validos[
+                    ~df_din_validos["Descrição"].apply(_eh_saldo_inicial)
+                ]
 
             entradas_dinheiro_periodo = df_din_validos.loc[df_din_validos["Tipo"] == "Entrada", "Valor"].sum()
             saidas_dinheiro_periodo = df_din_validos.loc[df_din_validos["Tipo"] == "Saída", "Valor"].sum()
@@ -479,6 +490,13 @@ with tab1:
     if not df_din_calc.empty and "Valor" in df_din_calc.columns:
         df_din_calc = df_din_calc[df_din_calc["Valor"] > 0]
 
+    if not df_din_calc.empty and "Descrição" in df_din_calc.columns:
+        _mask_si = df_din_calc["Descrição"].apply(_eh_saldo_inicial)
+    else:
+        _mask_si = pd.Series(False, index=df_din_calc.index)
+    saldo_ini_d = df_din_calc.loc[_mask_si & (df_din_calc["Tipo"] == "Entrada"), "Valor"].sum()
+    df_din_calc = df_din_calc[~_mask_si]
+
     entradas_d = df_din_calc.loc[df_din_calc["Tipo"] == "Entrada", "Valor"].sum()
     saidas_d = df_din_calc.loc[df_din_calc["Tipo"] == "Saída", "Valor"].sum()
 
@@ -491,17 +509,46 @@ with tab1:
     with col_c3:
         st.write("Saldo do dinheiro no período:", format_currency(entradas_d - saidas_d))
 
-    # Conferência com o saldo da gaveta informado no último email do Suitable.
-    # Saldo do período (fluxo) + saldo inicial do mês = saldo da gaveta.
+    # Saldo em caixa = saldo inicial (linha "Saldo inicial") + movimentos do período.
+    # Deve bater com a linha "Dinheiro" de "Saldos de Fechamento" do email do Suitable.
+    _saldo_caixa = saldo_ini_d + entradas_d - saidas_d
     _ult = (st.session_state.get("gmail_info") or {}).get("ultimo_saldo")
+
+    if saldo_ini_d:
+        st.markdown("##### Saldo em caixa (saldo inicial + período)")
+        col_s1, col_s2, col_s3 = st.columns(3)
+        with col_s1:
+            st.write("Saldo inicial:", format_currency(saldo_ini_d))
+        with col_s2:
+            st.write("Saldo do período:", format_currency(entradas_d - saidas_d))
+        with col_s3:
+            st.write("**Saldo em caixa:**", f"**{format_currency(_saldo_caixa)}**")
+
     if _ult:
         _dt_ult, _saldo_gaveta = _ult
         _gav = format_currency(_saldo_gaveta).replace("$", "\\$")
-        _impl = format_currency(_saldo_gaveta - (entradas_d - saidas_d)).replace("$", "\\$")
+        if saldo_ini_d:
+            _dif = round(_saldo_caixa - _saldo_gaveta, 2)
+            if abs(_dif) < 0.005:
+                st.success(
+                    f"✅ Bate com o Suitable: gaveta de {_dt_ult:%d/%m/%Y} = {_gav}."
+                )
+            else:
+                _d = format_currency(_dif).replace("$", "\\$")
+                st.warning(
+                    f"Não bate com o Suitable: gaveta de {_dt_ult:%d/%m/%Y} = {_gav}; "
+                    f"diferença (app − Suitable) = {_d}. Confira lançamentos do período."
+                )
+        else:
+            _impl = format_currency(_saldo_gaveta - (entradas_d - saidas_d)).replace("$", "\\$")
+            st.caption(
+                f"Gaveta segundo o email do Suitable de {_dt_ult:%d/%m/%Y}: {_gav}. "
+                f"Saldo inicial implícito (gaveta − saldo do período): {_impl}. "
+                "Lance uma linha com a descrição \"Saldo inicial\" com esse valor."
+            )
+    elif saldo_ini_d:
         st.caption(
-            f"Gaveta segundo o email do Suitable de {_dt_ult:%d/%m/%Y}: {_gav}. "
-            f"Saldo inicial implícito (gaveta − saldo do período): {_impl}. "
-            "Esse valor deve ser igual ao saldo inicial do 1º fechamento do mês."
+            "Para conferir com o Suitable, clique em \"Buscar fechamentos do Gmail\" acima."
         )
 
 
