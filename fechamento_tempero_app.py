@@ -69,9 +69,10 @@ arquivo_pag = st.sidebar.file_uploader(
     "Extrato PagSeguro (.csv ou .xlsx)", type=["csv", "xlsx", "xls"], key="pagseguro"
 )
 
-saldo_inicial_input = st.sidebar.text_input(
-    "Saldo inicial consolidado do período (R$)", value="0"
-)
+# Saldo inicial consolidado removido da barra lateral: o saldo inicial do caixa em
+# dinheiro é lançado na grade do Caixa Diário (linha "Saldo inicial"). Mantido como 0
+# internamente só para compatibilidade com as colunas do Excel/histórico.
+saldo_inicial_input = "0"
 
 default_periodo = datetime.today().strftime("%Y-%m") + " - período"
 nome_periodo = st.sidebar.text_input(
@@ -665,8 +666,7 @@ with tab2:
             st.markdown("---")
             st.markdown('<div class="tempero-section-title">🏁 Consolidado da loja</div>', unsafe_allow_html=True)
             st.markdown('<div class="tempero-card">', unsafe_allow_html=True)
-            st.write("Saldo inicial:", format_currency(saldo_inicial))
-            st.write("Saldo final  :", format_currency(saldo_final))
+            st.write("Resultado do período:", format_currency(resultado_consolidado))
             st.markdown("</div>", unsafe_allow_html=True)
 
             st.markdown('<div class="tempero-section-title">📌 Resumo por categoria</div>', unsafe_allow_html=True)
