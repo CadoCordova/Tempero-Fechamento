@@ -502,28 +502,30 @@ with tab1:
     saidas_d = df_din_calc.loc[df_din_calc["Tipo"] == "Saída", "Valor"].sum()
 
     st.markdown("---")
-    col_c1, col_c2, col_c3 = st.columns(3)
-    with col_c1:
-        st.write("Entradas em dinheiro no período:", format_currency(entradas_d))
-    with col_c2:
-        st.write("Saídas em dinheiro no período:", format_currency(-saidas_d) if saidas_d else "R$ 0,00")
-    with col_c3:
-        st.write("Saldo do dinheiro no período:", format_currency(entradas_d - saidas_d))
-
-    # Saldo em caixa = saldo inicial (linha "Saldo inicial") + movimentos do período.
+    # Saldo em caixa = saldo inicial (linha "Saldo inicial") + entradas − saídas do período.
     # Deve bater com a linha "Dinheiro" de "Saldos de Fechamento" do email do Suitable.
     _saldo_caixa = saldo_ini_d + entradas_d - saidas_d
     _ult = (st.session_state.get("gmail_info") or {}).get("ultimo_saldo")
 
+    _saidas_txt = format_currency(-saidas_d) if saidas_d else "R$ 0,00"
     if saldo_ini_d:
-        st.markdown("##### Saldo em caixa (saldo inicial + período)")
-        col_s1, col_s2, col_s3 = st.columns(3)
-        with col_s1:
+        col_c0, col_c1, col_c2, col_c3 = st.columns(4)
+        with col_c0:
             st.write("Saldo inicial:", format_currency(saldo_ini_d))
-        with col_s2:
-            st.write("Saldo do período:", format_currency(entradas_d - saidas_d))
-        with col_s3:
+        with col_c1:
+            st.write("Entradas:", format_currency(entradas_d))
+        with col_c2:
+            st.write("Saídas:", _saidas_txt)
+        with col_c3:
             st.write("**Saldo em caixa:**", f"**{format_currency(_saldo_caixa)}**")
+    else:
+        col_c1, col_c2, col_c3 = st.columns(3)
+        with col_c1:
+            st.write("Entradas em dinheiro no período:", format_currency(entradas_d))
+        with col_c2:
+            st.write("Saídas em dinheiro no período:", _saidas_txt)
+        with col_c3:
+            st.write("Saldo do dinheiro no período:", format_currency(entradas_d - saidas_d))
 
     if _ult:
         _dt_ult, _saldo_gaveta = _ult
