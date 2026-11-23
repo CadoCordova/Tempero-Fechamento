@@ -289,11 +289,13 @@ def _extrair_info_caixa(html: str) -> dict:
     - recebimento_off: valor de "Recebimento OFF" (venda que não entrou na gaveta)
     - saldo_dinheiro: "Dinheiro" (valor esperado) da tabela "Saldos de Fechamento
       por Forma de Pagamento" = dinheiro físico na gaveta ao fechar.
+    - saldo_informado: "Dinheiro" (valor informado) = o que foi contado na gaveta.
+      informado − esperado = sobra (+) ou quebra (−) do dia.
     """
     from bs4 import BeautifulSoup
 
     soup = BeautifulSoup(html, "html.parser")
-    info = {"recebimento_off": 0.0, "saldo_dinheiro": None}
+    info = {"recebimento_off": 0.0, "saldo_dinheiro": None, "saldo_informado": None}
     for table in soup.find_all("table"):
         rows = table.find_all("tr")
         if len(rows) < 2:
@@ -311,6 +313,8 @@ def _extrair_info_caixa(html: str) -> dict:
             forma = " ".join(cols[0].get_text(" ", strip=True).lower().split())
             if "saldos de fechamento" in contexto and forma == "dinheiro":
                 info["saldo_dinheiro"] = parse_numero_br(cols[1].get_text(strip=True))
+                if len(cols) >= 3:
+                    info["saldo_informado"] = parse_numero_br(cols[2].get_text(strip=True))
             elif "pedidos por meio de pagamento" in contexto and re.fullmatch(
                 r"(?:\(\+\)\s*)?recebimento off", forma
             ):
@@ -395,10 +399,26 @@ def buscar_fechamentos_gmail_com_info(ano_mes: str) -> tuple[list[dict], dict]:
                 f"{data_fechamento:%d/%m/%Y}: Recebimento OFF de R\\$ {_off} "
                 "não foi lançado como dinheiro (não entrou na gaveta). Conferir com Itaú/PagSeguro."
             )
-        if info["saldo_dinheiro"] is not None and (
+        # Sobra/quebra de caixa: informado − esperado (o saldo informado vira o
+        # saldo inicial do dia seguinte no Suitable, então precisa entrar no app).
+        if info["saldo_dinheiro"] is not None and info["saldo_informado"] is not None:
+            ajuste = round(info["saldo_informado"] - info["saldo_dinheiro"], 2)
+            if abs(ajuste) >= 0.005:
+                todos.append({
+                    "Data": data_fechamento,
+                    "Descrição": (
+                        "Sobra de caixa (Suitable)" if ajuste > 0 else "Quebra de caixa (Suitable)"
+                    ),
+                    "Tipo": "Entrada" if ajuste > 0 else "Saída",
+                    "Valor": abs(ajuste),
+                })
+        _saldo_ref = info["saldo_informado"]
+        if _saldo_ref is None:
+            _saldo_ref = info["saldo_dinheiro"]
+        if _saldo_ref is not None and (
             ultimo_saldo is None or data_fechamento >= ultimo_saldo[0]
         ):
-            ultimo_saldo = (data_fechamento, info["saldo_dinheiro"])
+            ultimo_saldo = (data_fechamento, _saldo_ref)
 
     avisos.sort()
     return todos, {"avisos": avisos, "ultimo_saldo": ultimo_saldo}
