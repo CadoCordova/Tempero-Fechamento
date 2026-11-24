@@ -8,6 +8,7 @@ import unicodedata
 import pandas as pd
 
 from modules.gdrive import download_history_file, list_history_from_gdrive
+from modules.canais import receita_por_canal_dict
 from modules.gerencial import (
     CATS_SOCIOS,
     CAT_RECEITA,
@@ -59,6 +60,30 @@ def _chave_versao(f: dict) -> str:
     return re.sub(r"\D", "", str(f.get("modifiedTime", "")))[:14]
 
 
+def selecionar_versoes_recentes(arquivos: list[dict]) -> list[dict]:
+    """
+    Quando o mesmo mês (YYYY-MM) foi salvo mais de uma vez, mantém só a versão mais recente.
+    Arquivos sem mês identificável são mantidos como estão.
+    """
+    por_mes: dict[str, dict] = {}
+    sem_mes: list[dict] = []
+    for f in arquivos:
+        ano_mes = get_ano_mes(str(f.get("name", "")))
+        if not ano_mes:
+            sem_mes.append(f)
+            continue
+        # fechamento de quinzena é um período à parte, não versão do mês cheio
+        chave = ano_mes + ("|quinzena" if _eh_quinzena(f) else "")
+        atual = por_mes.get(chave)
+        if atual is None or _chave_versao(f) > _chave_versao(atual):
+            por_mes[chave] = f
+    return list(por_mes.values()) + sem_mes
+
+
+def _eh_quinzena(f: dict) -> bool:
+    return "quinzena" in _normalizar(f.get("name", "")).lower()
+
+
 def _ler_categorias_fechamento(buf) -> dict[str, float]:
     """
     Lê a aba Categorias do fechamento e retorna dict {categoria: valor_liquido}.
@@ -108,13 +133,17 @@ def carregar_dre_anual() -> tuple[list[str], list[dict], dict]:
     # Se o mesmo mês foi salvo mais de uma vez, vale a versão mais recente
     # (a listagem vem do mais novo para o mais antigo e a versão antiga estava vencendo).
     mais_recente: dict[str, dict] = {}
-    for f in fechamentos:
+    for f in selecionar_versoes_recentes(fechamentos):
         ano_mes = get_ano_mes(f.get("name", ""))
         if not ano_mes:
             continue
-        atual = mais_recente.get(ano_mes)
-        if atual is None or _chave_versao(f) > _chave_versao(atual):
+        # no DRE mensal, mês cheio vale mais que quinzena
+        if ano_mes in mais_recente and _eh_quinzena(f) and not _eh_quinzena(mais_recente[ano_mes]):
+            continue
+        if ano_mes in mais_recente and _eh_quinzena(mais_recente[ano_mes]) and not _eh_quinzena(f):
             mais_recente[ano_mes] = f
+            continue
+        mais_recente[ano_mes] = f
 
     for ano_mes, f in mais_recente.items():
         try:
@@ -135,6 +164,14 @@ def carregar_dre_anual() -> tuple[list[str], list[dict], dict]:
             # Categorias
             cats = _ler_categorias_fechamento(buf)
             dados[ano_mes] = cats
+
+            # Receita por canal (a partir da aba Movimentos; arquivos antigos sem ela ficam sem canais)
+            try:
+                buf.seek(0)
+                df_mv = pd.read_excel(buf, sheet_name="Movimentos", header=1)
+                resumos[ano_mes]["canais"] = receita_por_canal_dict(df_mv)
+            except Exception:
+                resumos[ano_mes]["canais"] = {}
 
         except Exception:
             continue

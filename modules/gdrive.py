@@ -225,6 +225,12 @@ def delete_history_file(file_id: str):
     service.files().delete(fileId=file_id).execute()
 
 
+def trash_history_file(file_id: str):
+    """Manda um arquivo do histórico para a lixeira do Drive (recuperável por 30 dias)."""
+    service = get_gdrive_service()
+    service.files().update(fileId=file_id, body={"trashed": True}).execute()
+
+
 # ---------------------------------------------------------------------------
 # Leitura de relatórios de fechamento
 # ---------------------------------------------------------------------------

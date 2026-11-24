@@ -1,4 +1,6 @@
 import json
+import re
+from functools import lru_cache
 from pathlib import Path
 
 import pandas as pd
@@ -9,6 +11,12 @@ from modules.utils import normalizar_texto
 
 RULES_PATH = Path("regras_categorias.json")
 RECLASS_PATH = Path("reclassificacoes_pontuais.json")
+# Fornecedores/contrapartes já conhecidos (gerado a partir dos fechamentos salvos).
+SEED_PATH = Path(__file__).resolve().parent.parent / "regras_iniciais.json"
+
+# Categorias de pessoas: uma ENTRADA de funcionária/prestador (ex.: PIX de marmita) é receita, não
+# redução de folha.
+CATS_PESSOAS = ("Folha de Pagamento", "Nutricionista", "Pagamento Terceiros")
 CATEGORIAS_PATH = Path("categorias_personalizadas.json")
 
 CATEGORIAS_PADRAO = [
@@ -178,6 +186,41 @@ def salvar_categorias_personalizadas(lista: list[str]):
 
 
 # ---------------------------------------------------------------------------
+# Contraparte (quem recebeu/pagou) e regras iniciais
+# ---------------------------------------------------------------------------
+
+_SEG_NUMERICO = re.compile(r"^[-+]?[\d\.\,\s/\-]+$")
+
+
+def chave_contraparte(descricao, conta=None) -> str | None:
+    """
+    Nome da contraparte na descrição do extrato, sem valor/CPF/CNPJ, para regras que
+    valem em qualquer mês (a descrição completa traz o valor e só repete se o valor repetir).
+    Itaú: "TIPO | NOME | CPF/CNPJ | valor | ..." → NOME.  PagSeguro: "NOME | ... | tipo" → NOME.
+    Retorna None quando não há nome identificável (ex.: "RESGATE CDB DI | nan | 42961.82").
+    """
+    segs = [s.strip() for s in str(descricao or "").split("|") if s.strip()]
+    if len(segs) < 2:
+        return None
+    nome = segs[0] if str(conta) == "PagSeguro" else segs[1]
+    n = normalizar_texto(nome).strip()
+    n = re.sub(r"\s+\d{9,14}\s*$", "", n)
+    if not n or n == "NAN" or _SEG_NUMERICO.match(n) or len(n) < 8:
+        return None
+    return n
+
+
+@lru_cache(maxsize=1)
+def carregar_regras_iniciais() -> dict:
+    try:
+        with SEED_PATH.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+            return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+# ---------------------------------------------------------------------------
 # Classificação
 # ---------------------------------------------------------------------------
 
@@ -207,6 +250,7 @@ def classificar_categoria(mov: dict, regras: dict | None = None, reclass: dict |
     desc_orig = mov.get("descricao")
     desc_norm = normalizar_texto(desc_orig)
     valor = mov.get("valor", 0.0)
+    conta = mov.get("conta")
 
     if reclass:
         chave = chave_reclassificacao(mov.get("data"), valor, desc_orig)
@@ -217,6 +261,24 @@ def classificar_categoria(mov: dict, regras: dict | None = None, reclass: dict |
         if padrao in desc_norm:
             return categoria
 
+    # Contraparte já conhecida (fornecedor, concessionária etc.) — só para saídas
+    if valor < 0:
+        contraparte = chave_contraparte(desc_orig, conta)
+        if contraparte:
+            categoria_seed = carregar_regras_iniciais().get(contraparte)
+            if categoria_seed:
+                return categoria_seed
+
+    categoria = _classificar_por_palavras(desc_norm, valor, conta)
+
+    # Entrada de funcionária/prestador (ex.: PIX de marmita) é receita, não redução de custo
+    if valor > 0 and categoria in CATS_PESSOAS:
+        return "Vendas / Receitas"
+    return categoria
+
+
+def _classificar_por_palavras(desc_norm: str, valor: float, conta: str | None) -> str:
+    """Regras por palavra-chave e padrão final (valor > 0 receita; valor < 0 a classificar)."""
     if "SANGRIA" in desc_norm:
         return "Sangria"
 
@@ -243,8 +305,14 @@ def classificar_categoria(mov: dict, regras: dict | None = None, reclass: dict |
                                        "ITAU UNIBANCO HOLDING S.A.", "CARTAO")):
         return "Fatura Cartão"
 
-    if any(kw in desc_norm for kw in ("APLICACAO", "CDB", "CREDBANCRF")):
+    if any(kw in desc_norm for kw in ("APLICACAO", "CDB", "CREDBANCRF", "ITAUVEST", "RESGATE")) or desc_norm.startswith("APLIC "):
         return "Investimentos (Aplicações)"
+
+    # Tarifas do banco ("TAR PLANO ADAPT", "TAR PIXQR LIQ MAQUININHA"...) e taxa estadual (SEFAZ)
+    if desc_norm.startswith("TAR "):
+        return "Tarifas Bancos"
+    if "SEFAZ" in desc_norm:
+        return "Impostos e Encargos"
 
     if any(kw in desc_norm for kw in ("REND PAGO APLIC", "RENDIMENTO APLIC", "REND APLIC", "RENDIMENTO")):
         return "Rendimentos de Aplicações"
@@ -272,6 +340,11 @@ def classificar_categoria(mov: dict, regras: dict | None = None, reclass: dict |
     if valor > 0:
         return "Vendas / Receitas"
     if valor < 0:
-        return "Fornecedores e Insumos"
+        # Saída sem regra nenhuma: antes virava "Fornecedores" em silêncio (e entrava no CMV).
+        # Agora fica para você classificar. Exceção: lançamentos do caixa em dinheiro
+        # (contas pagas do Suitable), que são pequenos e quase sempre insumo.
+        if conta == "Dinheiro":
+            return "Fornecedores e Insumos"
+        return "A Classificar"
 
     return "A Classificar"

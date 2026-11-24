@@ -3,6 +3,9 @@ import streamlit as st
 
 from modules.utils import format_currency
 
+# Lançamento manual (sem '(Suitable)') no caixa em dinheiro acima disso merece conferência
+LIMITE_LANCAMENTO_MANUAL_DINHEIRO = 5_000.0
+
 
 def validar_consistencia_fechamento(
     df_mov: pd.DataFrame,
@@ -106,9 +109,32 @@ def validar_consistencia_fechamento(
                     f"{format_currency(abs(mov['Valor']))} em {mov['Conta']} - {desc}..."
                 )
 
-            nao_classificadas = len(df_mov[df_mov["Categoria"] == "A Classificar"])
+            df_ac = df_mov[df_mov["Categoria"] == "A Classificar"]
+            nao_classificadas = len(df_ac)
             if nao_classificadas > 10:
                 avisos.append(f"⚠️ Alto número de transações não classificadas: {nao_classificadas}")
+            elif nao_classificadas > 0:
+                total_ac = df_ac["Valor"].abs().sum()
+                avisos.append(
+                    f"⚠️ {nao_classificadas} lançamento(s) em 'A Classificar' ({format_currency(total_ac)}): "
+                    "classifique na aba Conferência & Categorias antes de salvar o fechamento"
+                )
+
+            # Lançamentos manuais grandes no caixa em dinheiro (ex.: ajuste lançado como entrada)
+            din = df_mov[df_mov["Conta"] == "Dinheiro"]
+            if not din.empty:
+                manual = din[
+                    (din["Valor"].abs() >= LIMITE_LANCAMENTO_MANUAL_DINHEIRO)
+                    & ~din["Descrição"].astype(str).str.strip().str.endswith("(Suitable)")
+                ]
+                for _, mov in manual.iterrows():
+                    dt = pd.to_datetime(mov.get("Data"), errors="coerce")
+                    dt_txt = "" if pd.isna(dt) else f"{dt:%d/%m} · "
+                    avisos.append(
+                        f"⚠️ Lançamento manual de {format_currency(abs(mov['Valor']))} no caixa em dinheiro "
+                        f"({dt_txt}{str(mov.get('Descrição', ''))[:40]}): não parece venda em dinheiro do "
+                        "Suitable. Confirme"
+                    )
 
             zeros = len(df_mov[df_mov["Valor"] == 0])
             if zeros > 5:
@@ -170,6 +196,10 @@ def exibir_painel_validacao(avisos: list[str]):
             st.markdown("• Verifique se os valores estão corretos")
             st.markdown("• Confira se há duplicação de lançamentos")
 
-        if any("Alto número de transações não classificadas" in a for a in avisos):
+        if any("Lançamento manual de" in a for a in avisos):
+            st.markdown("• Se for ajuste de aplicação ou de outra conta, lance fora do caixa em dinheiro")
+            st.markdown("• Se for venda, confira o valor na grade do Caixa Diário")
+
+        if any(("Alto número de transações não classificadas" in a) or ("em 'A Classificar'" in a) for a in avisos):
             st.markdown("• Ajuste as regras de categorização na aba 'Conferência & Categorias'")
             st.markdown("• Classifique manualmente as transações pendentes")

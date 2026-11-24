@@ -18,6 +18,7 @@ from modules.categorias import (
     CATEGORIAS_PADRAO,
     carregar_categorias_personalizadas,
     carregar_regras,
+    chave_contraparte,
     chave_reclassificacao,
     classificar_categoria,
     get_reclassificacoes_sessao,
@@ -28,11 +29,12 @@ from modules.categorias import (
     salvar_reclassificacoes,
     salvar_regras,
 )
-from modules.excel import formatar_tabela_excel
+from modules.excel import formatar_tabela_excel, gerar_excel_fechamento
 from modules.extratos import carregar_extrato_itau_upload, carregar_extrato_pagseguro_upload
 from modules.gdrive import (
     delete_history_file,
     download_history_file,
+    trash_history_file,
     list_fechamentos_history_files,
     list_history_from_gdrive,
     load_fechamento_report_from_gdrive,
@@ -41,7 +43,9 @@ from modules.gdrive import (
 from modules.ui import inject_css, metric_card_html
 from modules.utils import format_currency, get_ano_mes, normalizar_texto, parse_numero_br, slugify
 from modules.validacao import exibir_painel_validacao, validar_consistencia_fechamento
-from modules.controle_anual import carregar_dre_anual, gerar_alertas
+from modules.controle_anual import carregar_dre_anual, gerar_alertas, selecionar_versoes_recentes
+from modules.historico_edicao import aplicar_ajustes_e_gerar_excel
+from modules.canais import CANAIS_ORDEM, receita_por_canal_dict, tabela_canais
 from modules.gerencial import (
     ponte_por_categoria,
     ponte_por_movimentos,
@@ -203,6 +207,7 @@ df_cat_export = pd.DataFrame()
 df_resumo_contas = pd.DataFrame()
 df_consolidado = pd.DataFrame()
 df_gerencial = pd.DataFrame()
+df_canais = pd.DataFrame()
 excel_buffer: BytesIO | None = None
 
 if arquivo_itau and arquivo_pag:
@@ -334,55 +339,23 @@ if arquivo_itau and arquivo_pag:
 
             # Visão gerencial: abre o resultado em operação / retiradas / aplicações
             df_gerencial = tabela_ponte(ponte_por_movimentos(df_mov))
+            df_canais = tabela_canais(receita_por_canal_dict(df_mov))
 
             avisos_validacao = validar_consistencia_fechamento(
                 df_mov, df_resumo_contas, df_consolidado, saldo_inicial
             )
 
             # Gera Excel
-            buffer = BytesIO()
-            with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-                start_row_resumo = 3
-                df_resumo_contas.to_excel(writer, sheet_name="Resumo", index=False, startrow=start_row_resumo)
-
-                start_row_consol = start_row_resumo + len(df_resumo_contas) + 3
-                df_consolidado.to_excel(writer, sheet_name="Resumo", index=False, startrow=start_row_consol)
-
-                df_consolidado.to_excel(writer, sheet_name="ResumoDados", index=False)
-                df_cat_export.to_excel(writer, sheet_name="Categorias", index=False, startrow=1)
-                df_mov.to_excel(writer, sheet_name="Movimentos", index=False, startrow=1)
-                df_dinheiro_periodo_fechar.to_excel(writer, sheet_name="Dinheiro", index=False, startrow=1)
-                df_gerencial.to_excel(writer, sheet_name="Gerencial", index=False, startrow=1)
-
-                ws_res = writer.sheets["Resumo"]
-                ws_cat = writer.sheets["Categorias"]
-                ws_mov = writer.sheets["Movimentos"]
-                ws_din = writer.sheets["Dinheiro"]
-                ws_ger = writer.sheets["Gerencial"]
-
-                ws_res["A1"] = f"Fechamento Tempero das Gurias - {nome_periodo}"
-                ws_res["A1"].font = Font(bold=True, size=14)
-                ws_res["A1"].alignment = Alignment(horizontal="left")
-
-                formatar_tabela_excel(ws_res, df_resumo_contas, start_row=start_row_resumo)
-                formatar_tabela_excel(ws_res, df_consolidado, start_row=start_row_consol)
-                if not df_cat_export.empty:
-                    formatar_tabela_excel(ws_cat, df_cat_export, start_row=1)
-                if not df_mov.empty:
-                    formatar_tabela_excel(ws_mov, df_mov, start_row=1)
-                if not df_dinheiro_periodo_fechar.empty:
-                    formatar_tabela_excel(ws_din, df_dinheiro_periodo_fechar, start_row=1)
-                ws_ger["A1"] = (
-                    "Visão gerencial (a variação de caixa é o mesmo 'Resultado do período' do Resumo)"
-                )
-                ws_ger["A1"].font = Font(bold=True)
-                formatar_tabela_excel(ws_ger, df_gerencial, start_row=1)
-                for _r in range(3, 3 + len(df_gerencial)):
-                    ws_ger.cell(row=_r, column=3).number_format = "0.0%"
-                ws_ger.column_dimensions["A"].width = 70
-
-            buffer.seek(0)
-            excel_buffer = buffer
+            excel_buffer = gerar_excel_fechamento(
+                nome_periodo,
+                df_resumo_contas,
+                df_consolidado,
+                df_cat_export,
+                df_mov,
+                df_dinheiro_periodo_fechar,
+                df_gerencial,
+                df_canais,
+            )
             dados_carregados = True
 
         except RuntimeError as e:
@@ -409,6 +382,23 @@ def _render_gerencial(df_ger: pd.DataFrame):
     st.caption(
         "Retiradas = Transferência Interna / Sócios + Sangria. Receita = recebimentos no período "
         "(iFood e cartão já chegam líquidos de comissão/taxa)."
+    )
+
+
+def _render_canais(df_can: pd.DataFrame):
+    """Receita por canal (cartão, iFood, PIX, vale, dinheiro...)."""
+    if df_can is None or df_can.empty:
+        return
+    st.markdown('<div class="tempero-section-title">🧭 Receita por canal</div>', unsafe_allow_html=True)
+    _show = df_can.copy()
+    _show["Valor"] = _show["Valor"].map(format_currency)
+    _show["% da receita"] = _show["% da receita"].map(
+        lambda x: "" if pd.isna(x) else f"{x * 100:.1f}%".replace(".", ",")
+    )
+    st.dataframe(_show, use_container_width=True, hide_index=True)
+    st.caption(
+        "O canal é identificado pelo texto do lançamento no extrato. "
+        "\"TED (origem a confirmar)\" e \"Outros\" são recebimentos que não deu para identificar."
     )
 
 
@@ -659,6 +649,9 @@ with tab2:
                         if pd.notna(r["Categoria"])
                     }
                     _render_gerencial(tabela_ponte(ponte_por_categoria(_cats_h)))
+                _mov_h_canais = rep.get("movimentos", pd.DataFrame())
+                if not _mov_h_canais.empty:
+                    _render_canais(tabela_canais(receita_por_canal_dict(_mov_h_canais)))
 
             st.markdown('<div class="tempero-section-title">📑 Resumo por conta (do relatório)</div>', unsafe_allow_html=True)
             if df_res_contas_h.empty:
@@ -732,6 +725,7 @@ with tab2:
             st.markdown("</div>", unsafe_allow_html=True)
 
             _render_gerencial(df_gerencial)
+            _render_canais(df_canais)
 
             st.markdown('<div class="tempero-section-title">📌 Resumo por categoria</div>', unsafe_allow_html=True)
             st.markdown(
@@ -801,21 +795,81 @@ with tab3:
                 st.dataframe(df_cat_disp, use_container_width=True)
 
             st.markdown("---")
-            st.markdown("**Movimentos (do relatório)**")
+            st.markdown("**Movimentos (do relatório) — editar categorias**")
             if df_mov_h.empty:
                 st.info("Este relatório não possui a aba **Movimentos**.")
             else:
-                df_mov_h_display = df_mov_h.copy()
-                if "Data" in df_mov_h_display.columns:
-                    df_mov_h_display["Data"] = (
-                        pd.to_datetime(df_mov_h_display["Data"], dayfirst=True, errors="coerce")
-                        .dt.strftime("%d/%m/%Y")
-                        .fillna("")
+                st.caption(
+                    "Só a **Categoria** pode ser alterada. Valores, entradas, saídas e resultado do período não mudam; "
+                    "muda a abertura por categoria, a visão Gerencial e o Controle Anual. "
+                    "Ao salvar, é gerada uma **nova versão** do fechamento (a mais recente vale no Controle Anual)."
+                )
+                df_mov_h = df_mov_h.reset_index(drop=True)
+                df_view = df_mov_h.copy()
+                if "Data" in df_view.columns:
+                    df_view["Data"] = (
+                        pd.to_datetime(df_view["Data"], dayfirst=True, errors="coerce").dt.strftime("%d/%m/%Y").fillna("")
                     )
-                st.dataframe(df_mov_h_display, use_container_width=True)
+                _cats_h = CATEGORIAS_PADRAO + carregar_categorias_personalizadas()
+                _cats_h += sorted(c for c in df_mov_h["Categoria"].dropna().unique() if c not in _cats_h)
+                _busca = st.text_input("Filtrar por descrição/categoria (opcional):", key="hist_edit_busca")
+                _mask = pd.Series(True, index=df_view.index)
+                if _busca.strip():
+                    _b = normalizar_texto(_busca)
+                    _mask = df_view.apply(
+                        lambda r: _b in normalizar_texto(f"{r.get('Descrição', '')} {r.get('Categoria', '')}"), axis=1
+                    )
+                _ed = st.data_editor(
+                    df_view[_mask],
+                    use_container_width=True,
+                    hide_index=True,
+                    disabled=[c for c in df_view.columns if c != "Categoria"],
+                    column_config={"Categoria": st.column_config.SelectboxColumn("Categoria", options=_cats_h)},
+                    key=f"hist_editor_{st.session_state.get('hist_loaded_file_id')}_{_busca}",
+                )
+                _ajustes = {
+                    int(i): _ed.loc[i, "Categoria"]
+                    for i in _ed.index
+                    if _ed.loc[i, "Categoria"] != df_mov_h.loc[i, "Categoria"]
+                }
+                if _ajustes:
+                    st.warning(f"{len(_ajustes)} lançamento(s) com categoria alterada (ainda não salvo).")
+                    for i, c in list(_ajustes.items())[:20]:
+                        st.caption(
+                            f"• {df_view.loc[i, 'Data']} | {format_currency(float(df_mov_h.loc[i, 'Valor']))} | "
+                            f"{str(df_mov_h.loc[i, 'Descrição'])[:60]}: {df_mov_h.loc[i, 'Categoria']} → **{c}**"
+                        )
+                    _trash = st.checkbox(
+                        "Mandar a versão anterior para a lixeira do Drive (recuperável por 30 dias)",
+                        value=True,
+                        key="hist_edit_trash",
+                    )
+                    if st.button("💾 Salvar como nova versão", key="hist_edit_save", type="primary"):
+                        try:
+                            _novo_mov, _xl, _nome_p = aplicar_ajustes_e_gerar_excel(rep, _ajustes)
+                            _ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                            _fname = f"fechamento_tempero_{slugify(_nome_p)}_{_ts}.xlsx"
+                            upload_history_to_gdrive(_xl, _fname)
+                        except Exception as e:
+                            st.error(f"Não foi possível salvar a nova versão (nada foi apagado): {e}")
+                        else:
+                            _old_id = st.session_state.get("hist_loaded_file_id")
+                            _msg = f"Nova versão salva: {_fname}."
+                            if _trash and _old_id:
+                                try:
+                                    trash_history_file(_old_id)
+                                    _msg += " Versão anterior enviada para a lixeira."
+                                except Exception as e:
+                                    _msg += f" Atenção: não consegui apagar a versão anterior ({e}); o Controle Anual usa a mais recente."
+                            for k in ("hist_report_loaded", "hist_report_name", "hist_loaded_file_id", "hist_selected_name_sidebar"):
+                                st.session_state.pop(k, None)
+                            st.session_state["hist_edit_msg"] = _msg
+                            st.rerun()
+        if st.session_state.get("hist_edit_msg"):
+            st.success(st.session_state.pop("hist_edit_msg"))
 
         st.markdown("---")
-        st.caption("Fonte: Histórico (Drive) — visualização somente leitura")
+        st.caption("Fonte: Histórico (Drive) — edição de categorias gera nova versão")
         if nome_rep:
             st.caption(f"Relatório carregado: {nome_rep}")
 
@@ -828,6 +882,10 @@ with tab3:
 
             categorias_custom = carregar_categorias_personalizadas()
             categorias_possiveis = CATEGORIAS_PADRAO + categorias_custom
+            # categorias que já aparecem nos lançamentos (regras iniciais, histórico) também podem ser escolhidas
+            categorias_possiveis += sorted(
+                c for c in df_mov["Categoria"].dropna().unique() if c not in categorias_possiveis
+            )
 
             col_nc1, col_nc2 = st.columns([2, 1])
             with col_nc1:
@@ -852,9 +910,20 @@ with tab3:
                 unsafe_allow_html=True,
             )
 
+            _n_ac = int((df_mov["Categoria"] == "A Classificar").sum())
+            _so_ac = st.checkbox(
+                f"Mostrar só 'A Classificar' ({_n_ac} lançamento(s))",
+                value=_n_ac > 0,
+                key="so_a_classificar",
+            )
+            _df_editor = df_mov[df_mov["Categoria"] == "A Classificar"] if _so_ac else df_mov
+            if _so_ac and _df_editor.empty:
+                st.success("Nenhum lançamento em 'A Classificar'. Desmarque para ver todos.")
+
+            _editor_key = f"editor_movimentos_{int(_so_ac)}"
             edited_df = st.data_editor(
-                df_mov,
-                key="editor_movimentos",
+                _df_editor,
+                key=_editor_key,
                 use_container_width=True,
                 num_rows="fixed",
                 column_config={
@@ -871,24 +940,39 @@ with tab3:
                 # Regra é por descrição e vale para todos os lançamentos iguais. Se a mesma
                 # descrição aparece com categorias diferentes no mês (ex.: PIX de R$ 5.500 e de
                 # R$ 42.000 para a mesma pessoa), ela é ambígua e NÃO vira regra.
-                _desc_norm_col = edited_df["Descrição"].map(normalizar_texto)
-                _n_cat = edited_df.groupby(_desc_norm_col)["Categoria"].nunique()
+                # A regra passa a ser pela CONTRAPARTE (ex.: "NUTRIR DISTRIBUIDORA DE ALIMENTOS"),
+                # não pela descrição inteira: a descrição do banco traz o valor e só repetia quando
+                # o valor repetia. Sem nome identificável, usa a descrição completa como antes.
+                def _chave_regra(_row):
+                    return chave_contraparte(_row.get("Descrição"), _row.get("Conta")) or normalizar_texto(
+                        _row.get("Descrição")
+                    )
+
+                _chaves = edited_df.apply(_chave_regra, axis=1)
+                _n_cat = edited_df.groupby(_chaves)["Categoria"].nunique()
                 _ambiguas = set(_n_cat[_n_cat > 1].index)
                 alteracoes = 0
                 puladas: set[str] = set()
-                for _, row in edited_df.iterrows():
-                    desc = row.get("Descrição")
-                    cat = row.get("Categoria")
-                    if not desc or not cat:
+                # Só viram regra as linhas cuja categoria o usuário MUDOU nesta tela
+                # (antes toda linha do mês virava regra, inclusive as que ele não tocou).
+                _mudancas = (st.session_state.get(_editor_key) or {}).get("edited_rows", {})
+                for _pos, _mud in _mudancas.items():
+                    if "Categoria" not in _mud:
                         continue
-                    desc_norm = normalizar_texto(desc)
-                    if desc_norm in _ambiguas or chave_reclassificacao(
+                    _pos = int(_pos)
+                    row = edited_df.iloc[_pos]
+                    chave_regra = _chaves.iloc[_pos]
+                    desc = row.get("Descrição")
+                    cat = _mud["Categoria"]
+                    if not desc or not cat or cat == "A Classificar":
+                        continue
+                    if chave_regra in _ambiguas or chave_reclassificacao(
                         row.get("Data"), row.get("Valor"), desc
                     ) in _reclass_atual:
                         puladas.add(str(desc)[:50])
                         continue
-                    if regras.get(desc_norm) != cat:
-                        regras[desc_norm] = cat
+                    if regras.get(chave_regra) != cat:
+                        regras[chave_regra] = cat
                         alteracoes += 1
                 salvar_regras(regras)
                 reload_regras_sessao()
@@ -983,9 +1067,12 @@ with tab4:
         )
 
         resumos = []
-        for file_info in arquivos:
-            if not str(file_info.get("name", "")).startswith("fechamento_tempero_"):
-                continue
+        _fechamentos_cmp = selecionar_versoes_recentes(
+            [f for f in arquivos if str(f.get("name", "")).startswith("fechamento_tempero_")]
+        )
+        _ordem_arq = {f["id"]: i for i, f in enumerate(arquivos)}
+        _fechamentos_cmp.sort(key=lambda f: _ordem_arq.get(f["id"], 0))
+        for file_info in _fechamentos_cmp:
             try:
                 buf = download_history_file(file_info["id"])
                 try:
@@ -1277,6 +1364,21 @@ with tab5:
             df_dre_display.set_index("Categoria"),
             use_container_width=True,
         )
+
+        # --- Receita por canal, mês a mês ---
+        _canais_mes = {m: (resumos_anual.get(m, {}).get("canais") or {}) for m in meses_anual}
+        if any(_canais_mes.values()):
+            st.markdown('<div class="tempero-section-title">Receita por canal</div>', unsafe_allow_html=True)
+            _linhas_canal = []
+            for _c in [c for c in CANAIS_ORDEM if any(c in _canais_mes[m] for m in meses_anual)]:
+                _lin = {"Canal": _c}
+                for _m in meses_anual:
+                    _tot = sum(_canais_mes[_m].values())
+                    _v = _canais_mes[_m].get(_c, 0.0)
+                    _lin[_m] = "—" if not _v or not _tot else f"{format_currency(_v)} ({_v / _tot * 100:.0f}%)"
+                _linhas_canal.append(_lin)
+            st.dataframe(pd.DataFrame(_linhas_canal).set_index("Canal"), use_container_width=True)
+            st.caption("Canal identificado pelo texto do lançamento. Meses salvos sem a aba Movimentos ficam em branco.")
 
         st.markdown("---")
 
