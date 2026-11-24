@@ -8,6 +8,12 @@ import unicodedata
 import pandas as pd
 
 from modules.gdrive import download_history_file, list_history_from_gdrive
+from modules.gerencial import (
+    CATS_SOCIOS,
+    CAT_RECEITA,
+    cmv_mensal_e_media_movel,
+    ponte_por_categoria,
+)
 from modules.utils import format_currency, get_ano_mes
 
 # Categorias que aparecem no DRE, na ordem desejada
@@ -150,13 +156,11 @@ def carregar_dre_anual() -> tuple[list[str], list[dict], dict]:
 
 def calcular_cmv(dados_resumos: dict, dados_cats: dict) -> dict[str, float | None]:
     """
-    Calcula CMV (%) por mês: Fornecedores / Receita.
+    CMV (%) por mês: (Fornecedores + Embalagens) / Receita.
+    (Antes só Fornecedores entrava; Embalagens é custo de insumo do prato.)
     """
-    cmv = {}
-    for mes, cats in dados_cats.items():
-        receita = abs(cats.get("Vendas / Receitas", 0.0))
-        fornecedores = abs(cats.get("Fornecedores e Insumos", 0.0))
-        cmv[mes] = (fornecedores / receita) if receita > 0 else None
+    meses = sorted(dados_cats.keys())
+    cmv, _ = cmv_mensal_e_media_movel(meses, dados_cats)
     return cmv
 
 
@@ -167,33 +171,28 @@ def gerar_alertas(meses, resumos, dados_cats) -> list[dict]:
     """
     alertas = []
 
-    # CMV por mês
-    for mes in meses:
-        cats = dados_cats.get(mes, {})
-        receita = abs(cats.get("Vendas / Receitas", 0.0))
-        fornecedores = abs(cats.get("Fornecedores e Insumos", 0.0))
-        if receita > 0:
-            cmv = fornecedores / receita
-            if cmv > LIMITE_CMV_ATENCAO:
-                alertas.append({
-                    "tipo": "erro",
-                    "texto": f"CMV em {mes}: {cmv:.1%} — acima do limite de 32%. Investigar mix e desperdício."
-                })
-            elif cmv > LIMITE_CMV_AVISO:
-                alertas.append({
-                    "tipo": "aviso",
-                    "texto": f"CMV em {mes}: {cmv:.1%} — zona de atenção (28–32%)."
-                })
+    cmv_mes, cmv_mm = cmv_mensal_e_media_movel(list(meses), dados_cats)
 
-    # Tendência de CMV crescente (3+ meses seguidos subindo)
-    cmv_vals = []
+    # CMV: o mês isolado oscila (boleto pago em um mês, consumo em outro),
+    # então o alerta usa a média móvel de 3 meses.
     for mes in meses:
-        cats = dados_cats.get(mes, {})
-        receita = abs(cats.get("Vendas / Receitas", 0.0))
-        fornecedores = abs(cats.get("Fornecedores e Insumos", 0.0))
-        cmv_vals.append(fornecedores / receita if receita > 0 else None)
+        cmv = cmv_mm.get(mes)
+        if cmv is None:
+            continue
+        mes_txt = f" (mês isolado: {cmv_mes[mes]:.1%})" if cmv_mes.get(mes) is not None else ""
+        if cmv > LIMITE_CMV_ATENCAO:
+            alertas.append({
+                "tipo": "erro",
+                "texto": f"CMV (média 3 meses) em {mes}: {cmv:.1%}{mes_txt} — acima do limite de 32%. Investigar mix e desperdício."
+            })
+        elif cmv > LIMITE_CMV_AVISO:
+            alertas.append({
+                "tipo": "aviso",
+                "texto": f"CMV (média 3 meses) em {mes}: {cmv:.1%}{mes_txt} — zona de atenção (28–32%)."
+            })
 
-    cmv_validos = [(m, v) for m, v in zip(meses, cmv_vals) if v is not None]
+    # Tendência de CMV crescente (3+ meses seguidos subindo, na média móvel)
+    cmv_validos = [(m, cmv_mm[m]) for m in meses if cmv_mm.get(m) is not None]
     if len(cmv_validos) >= 3:
         subindo = all(
             cmv_validos[i][1] < cmv_validos[i + 1][1]
@@ -202,32 +201,43 @@ def gerar_alertas(meses, resumos, dados_cats) -> list[dict]:
         if subindo:
             alertas.append({
                 "tipo": "erro",
-                "texto": f"CMV subindo todo mês desde {cmv_validos[0][0]} — tendência de alta contínua. Ação urgente."
+                "texto": f"CMV (média 3 meses) subindo todo mês desde {cmv_validos[0][0]} — tendência de alta contínua. Ação urgente."
             })
 
-    # Resultado negativo
+    # Resultado operacional (sem aplicações e sem retiradas) e retiradas
     for mes in meses:
-        resultado = resumos.get(mes, {}).get("resultado", 0.0)
-        if resultado < 0:
+        ponte = ponte_por_categoria(dados_cats.get(mes, {}))
+        if ponte["operacional"] < 0:
             alertas.append({
                 "tipo": "erro",
-                "texto": f"Resultado negativo em {mes}: {format_currency(resultado)}."
+                "texto": f"Resultado operacional negativo em {mes}: {format_currency(ponte['operacional'])}."
+            })
+        elif ponte["apos_retiradas"] < 0:
+            alertas.append({
+                "tipo": "aviso",
+                "texto": (
+                    f"Retiradas em {mes} ({format_currency(abs(ponte['retiradas']))}) acima do resultado "
+                    f"operacional ({format_currency(ponte['operacional'])}): a diferença saiu do caixa/aplicações."
+                )
             })
 
-    # Retirada de sócios acima do limite
+    # Retirada de sócios acima do limite (Transferência + Sangria)
     for mes in meses:
         cats = dados_cats.get(mes, {})
-        retirada = abs(cats.get("Transferência Interna / Sócios", 0.0))
+        retirada = abs(sum(cats.get(c, 0.0) for c in CATS_SOCIOS))
         if retirada > LIMITE_RETIRADA_SOCIOS:
             alertas.append({
                 "tipo": "aviso",
-                "texto": f"Retirada de sócios em {mes}: {format_currency(retirada)} — acima de R$ 7.000. Verificar."
+                "texto": (
+                    f"Retirada de sócios em {mes}: {format_currency(retirada)} "
+                    f"(Transferência + Sangria) — acima de R$ 7.000. Verificar."
+                )
             })
 
     # Motoboy acima de 15% da receita
     for mes in meses:
         cats = dados_cats.get(mes, {})
-        receita = abs(cats.get("Vendas / Receitas", 0.0))
+        receita = abs(cats.get(CAT_RECEITA, 0.0))
         motoboy = abs(cats.get("Motoboy / Entregas", 0.0))
         if receita > 0 and motoboy / receita > LIMITE_MOTOBOY_PERC:
             alertas.append({
@@ -237,8 +247,8 @@ def gerar_alertas(meses, resumos, dados_cats) -> list[dict]:
 
     # Positivo: receita crescendo nos últimos 2 meses
     if len(meses) >= 2:
-        rec_penultimo = abs(dados_cats.get(meses[-2], {}).get("Vendas / Receitas", 0.0))
-        rec_ultimo = abs(dados_cats.get(meses[-1], {}).get("Vendas / Receitas", 0.0))
+        rec_penultimo = abs(dados_cats.get(meses[-2], {}).get(CAT_RECEITA, 0.0))
+        rec_ultimo = abs(dados_cats.get(meses[-1], {}).get(CAT_RECEITA, 0.0))
         if rec_ultimo > rec_penultimo:
             alertas.append({
                 "tipo": "ok",

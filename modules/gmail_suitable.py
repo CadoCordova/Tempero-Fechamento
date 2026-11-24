@@ -5,7 +5,8 @@ fechamento de caixa enviados pelo Suitable (envios@suitable.com.br).
 import base64
 import re
 import unicodedata
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import streamlit as st
 from google.auth.transport.requests import Request
@@ -356,7 +357,9 @@ def buscar_fechamentos_gmail_com_info(ano_mes: str) -> tuple[list[dict], dict]:
         f"from:{_REMETENTE} "
         f'subject:"{_ASSUNTO}" '
         f"after:{ano}/{mes:02d}/01 "
-        f"before:{prox_ano}/{prox_mes:02d}/01"
+        # até o dia 2 do mês seguinte: o fechamento feito antes das 11h do dia 1
+        # pertence ao último dia do mês (o filtro por data_fechamento descarta o resto)
+        f"before:{prox_ano}/{prox_mes:02d}/02"
     )
 
     results = (
@@ -370,6 +373,7 @@ def buscar_fechamentos_gmail_com_info(ano_mes: str) -> tuple[list[dict], dict]:
     todos: list[dict] = []
     avisos: list[str] = []
     ultimo_saldo = None
+    dias_com_fechamento: set[date] = set()
     for msg_ref in messages:
         html = _get_email_body(service, msg_ref["id"])
         if not html:
@@ -389,6 +393,7 @@ def buscar_fechamentos_gmail_com_info(ano_mes: str) -> tuple[list[dict], dict]:
         if data_fechamento.year != ano or data_fechamento.month != mes:
             continue
 
+        dias_com_fechamento.add(data_fechamento)
         lancamentos = _parse_email_html(html, data_fechamento)
         todos.extend(lancamentos)
 
@@ -421,4 +426,20 @@ def buscar_fechamentos_gmail_com_info(ano_mes: str) -> tuple[list[dict], dict]:
             ultimo_saldo = (data_fechamento, _saldo_ref)
 
     avisos.sort()
+
+    # Cobertura: dias úteis (seg–sex) do mês sem email de fechamento. Um remetente/layout
+    # novo ou um fechamento esquecido aparece aqui, em vez de passar em silêncio.
+    hoje = datetime.now(ZoneInfo("America/Sao_Paulo")).date()
+    ultimo_dia_mes = date(prox_ano, prox_mes, 1) - timedelta(days=1)
+    limite = min(ultimo_dia_mes, hoje - timedelta(days=1))
+    sem_fechamento = [
+        d for d in (date(ano, mes, 1) + timedelta(days=i) for i in range(limite.day if limite >= date(ano, mes, 1) else 0))
+        if d.weekday() < 5 and d not in dias_com_fechamento
+    ]
+    if sem_fechamento:
+        lista = ", ".join(f"{d:%d/%m}" for d in sem_fechamento)
+        avisos.append(
+            f"Dias úteis sem email de fechamento: {lista}. Se a loja estava fechada, ignore; "
+            "caso contrário o caixa desses dias não foi importado."
+        )
     return todos, {"avisos": avisos, "ultimo_saldo": ultimo_saldo}

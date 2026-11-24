@@ -60,64 +60,61 @@ def load_cash_from_gdrive(ano_mes_ref: str | None) -> pd.DataFrame:
         return pd.DataFrame(columns=_cols)
 
 
+def _eh_linha_suitable(descricao) -> bool:
+    """Linhas importadas do Gmail terminam com '(Suitable)'; as lançadas à mão, não."""
+    return str(descricao or "").strip().endswith("(Suitable)")
+
+
 def lancar_importados_gmail(ano_mes_ref: str | None, novos: list[dict]) -> tuple[int, int]:
     """
-    Mescla lançamentos importados do Gmail com o caixa existente no Drive.
+    Importa lançamentos do Gmail (Suitable) para o caixa do mês no Drive.
 
-    Duplicatas são detectadas por (Data + Descrição + Valor).
-    Retorna (qtd_inseridos, qtd_duplicatas_ignoradas).
+    Para cada dia que veio no email, as linhas "(Suitable)" já existentes nesse dia
+    são SUBSTITUÍDAS pelas do email (o email é a fonte). Linhas lançadas à mão
+    (sem "(Suitable)" na descrição, como "Saldo inicial") são preservadas, e dias
+    que não vieram no email não são tocados.
+
+    Isso evita dois problemas da regra antiga (Data + Descrição + Valor):
+    gastos iguais no mesmo dia (2 × R$ 34 de água) eram descartados como duplicata,
+    e uma linha editada à mão (217,50 em vez de 217,52) voltava duplicada.
+
+    Retorna (qtd_inseridos, qtd_linhas_suitable_substituidas).
     """
     df_atual = load_cash_from_gdrive(ano_mes_ref)
+    if not novos:
+        return 0, 0
 
-    # Normaliza datas do df_atual para comparação
-    if not df_atual.empty and "Data" in df_atual.columns:
-        df_atual["_data_str"] = pd.to_datetime(df_atual["Data"], errors="coerce").dt.strftime("%Y-%m-%d")
-    else:
-        df_atual["_data_str"] = pd.Series(dtype=str)
+    def _dia(d) -> str:
+        return d.strftime("%Y-%m-%d") if hasattr(d, "strftime") else str(d)
 
-    inseridos = 0
-    duplicatas = 0
-    novos_rows = []
+    dias_novos = {_dia(item["Data"]) for item in novos}
 
-    for item in novos:
-        data_item = item["Data"]
-        data_str = data_item.strftime("%Y-%m-%d") if hasattr(data_item, "strftime") else str(data_item)
-        desc = str(item.get("Descrição", "")).strip()
-        valor = float(item.get("Valor", 0.0))
+    removidos = 0
+    if not df_atual.empty:
+        dia_atual = pd.to_datetime(df_atual["Data"], errors="coerce").dt.strftime("%Y-%m-%d")
+        remover = dia_atual.isin(dias_novos) & df_atual["Descrição"].apply(_eh_linha_suitable)
+        removidos = int(remover.sum())
+        df_atual = df_atual[~remover]
 
-        # Verifica duplicata
-        if not df_atual.empty:
-            duplicado = (
-                (df_atual["_data_str"] == data_str)
-                & (df_atual["Descrição"].fillna("").astype(str).str.strip() == desc)
-                & (df_atual["Valor"].fillna(0).astype(float).round(2) == round(valor, 2))
-            ).any()
-        else:
-            duplicado = False
-
-        if duplicado:
-            duplicatas += 1
-        else:
-            novos_rows.append({
-                "Data": data_item,
-                "Descrição": desc,
+    df_novos = pd.DataFrame(
+        [
+            {
+                "Data": item["Data"],
+                "Descrição": str(item.get("Descrição", "")).strip(),
                 "Tipo": item.get("Tipo", "Entrada"),
-                "Valor": valor,
-            })
-            inseridos += 1
+                "Valor": float(item.get("Valor", 0.0)),
+            }
+            for item in novos
+        ],
+        columns=["Data", "Descrição", "Tipo", "Valor"],
+    )
 
-    if novos_rows:
-        df_novos = pd.DataFrame(novos_rows, columns=["Data", "Descrição", "Tipo", "Valor"])
-        df_atual = df_atual.drop(columns=["_data_str"], errors="ignore")
-        df_merged = pd.concat([df_atual, df_novos], ignore_index=True)
-        # Ordena por data
-        df_merged["Data"] = pd.to_datetime(df_merged["Data"], errors="coerce")
-        df_merged = df_merged.sort_values("Data").reset_index(drop=True)
-        save_cash_to_gdrive(ano_mes_ref, df_merged)
-    else:
-        df_atual = df_atual.drop(columns=["_data_str"], errors="ignore")
+    df_merged = pd.concat([df_atual, df_novos], ignore_index=True)
+    df_merged["Data"] = pd.to_datetime(df_merged["Data"], errors="coerce")
+    df_merged = df_merged.sort_values("Data", kind="stable").reset_index(drop=True)
+    save_cash_to_gdrive(ano_mes_ref, df_merged)
 
-    return inseridos, duplicatas
+    return len(df_novos), removidos
 
 
 def save_cash_to_gdrive(ano_mes_ref: str | None, df: pd.DataFrame):

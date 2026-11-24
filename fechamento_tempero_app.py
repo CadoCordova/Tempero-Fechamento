@@ -37,7 +37,13 @@ from modules.gdrive import (
 from modules.ui import inject_css, metric_card_html
 from modules.utils import format_currency, get_ano_mes, normalizar_texto, parse_numero_br, slugify
 from modules.validacao import exibir_painel_validacao, validar_consistencia_fechamento
-from modules.controle_anual import carregar_dre_anual, calcular_cmv, gerar_alertas
+from modules.controle_anual import carregar_dre_anual, gerar_alertas
+from modules.gerencial import (
+    ponte_por_categoria,
+    ponte_por_movimentos,
+    tabela_ponte,
+    cmv_mensal_e_media_movel,
+)
 
 # ========================
 #  Config Streamlit
@@ -192,6 +198,7 @@ df_mov = pd.DataFrame()
 df_cat_export = pd.DataFrame()
 df_resumo_contas = pd.DataFrame()
 df_consolidado = pd.DataFrame()
+df_gerencial = pd.DataFrame()
 excel_buffer: BytesIO | None = None
 
 if arquivo_itau and arquivo_pag:
@@ -321,6 +328,9 @@ if arquivo_itau and arquivo_pag:
                 "Saldo final": saldo_final,
             }])
 
+            # Visão gerencial: abre o resultado em operação / retiradas / aplicações
+            df_gerencial = tabela_ponte(ponte_por_movimentos(df_mov))
+
             avisos_validacao = validar_consistencia_fechamento(
                 df_mov, df_resumo_contas, df_consolidado, saldo_inicial
             )
@@ -338,11 +348,13 @@ if arquivo_itau and arquivo_pag:
                 df_cat_export.to_excel(writer, sheet_name="Categorias", index=False, startrow=1)
                 df_mov.to_excel(writer, sheet_name="Movimentos", index=False, startrow=1)
                 df_dinheiro_periodo_fechar.to_excel(writer, sheet_name="Dinheiro", index=False, startrow=1)
+                df_gerencial.to_excel(writer, sheet_name="Gerencial", index=False, startrow=1)
 
                 ws_res = writer.sheets["Resumo"]
                 ws_cat = writer.sheets["Categorias"]
                 ws_mov = writer.sheets["Movimentos"]
                 ws_din = writer.sheets["Dinheiro"]
+                ws_ger = writer.sheets["Gerencial"]
 
                 ws_res["A1"] = f"Fechamento Tempero das Gurias - {nome_periodo}"
                 ws_res["A1"].font = Font(bold=True, size=14)
@@ -356,6 +368,14 @@ if arquivo_itau and arquivo_pag:
                     formatar_tabela_excel(ws_mov, df_mov, start_row=1)
                 if not df_dinheiro_periodo_fechar.empty:
                     formatar_tabela_excel(ws_din, df_dinheiro_periodo_fechar, start_row=1)
+                ws_ger["A1"] = (
+                    "Visão gerencial (a variação de caixa é o mesmo 'Resultado do período' do Resumo)"
+                )
+                ws_ger["A1"].font = Font(bold=True)
+                formatar_tabela_excel(ws_ger, df_gerencial, start_row=1)
+                for _r in range(3, 3 + len(df_gerencial)):
+                    ws_ger.cell(row=_r, column=3).number_format = "0.0%"
+                ws_ger.column_dimensions["A"].width = 70
 
             buffer.seek(0)
             excel_buffer = buffer
@@ -363,6 +383,29 @@ if arquivo_itau and arquivo_pag:
 
         except RuntimeError as e:
             mensagem_erro = str(e)
+
+
+def _render_gerencial(df_ger: pd.DataFrame):
+    """Mostra a ponte: resultado operacional → retiradas → aplicações → variação de caixa."""
+    if df_ger is None or df_ger.empty:
+        return
+    st.markdown('<div class="tempero-section-title">📈 Visão gerencial</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="tempero-section-sub">O "Resultado do período" é a variação de caixa: '
+        "mistura a operação com retiradas dos sócios e aplicações/resgates. "
+        "Aqui ele é aberto em partes.</div>",
+        unsafe_allow_html=True,
+    )
+    _show = df_ger.copy()
+    _show["Valor"] = _show["Valor"].map(format_currency)
+    _show["% da receita"] = _show["% da receita"].map(
+        lambda x: "" if pd.isna(x) else f"{x * 100:.1f}%".replace(".", ",")
+    )
+    st.dataframe(_show, use_container_width=True, hide_index=True)
+    st.caption(
+        "Retiradas = Transferência Interna / Sócios + Sangria. Receita = recebimentos no período "
+        "(iFood e cartão já chegam líquidos de comissão/taxa)."
+    )
 
 
 # ========================
@@ -439,7 +482,9 @@ with tab1:
     with st.expander("📥 Importar do Gmail (Suitable)"):
         st.markdown(
             "Busca os emails de **Fechamento de caixa** do Suitable "
-            f"para o período **{_ano_mes_caixa}** e importa os lançamentos em dinheiro."
+            f"para o período **{_ano_mes_caixa}** e importa os lançamentos em dinheiro. "
+            "Se um dia já foi importado, as linhas \"(Suitable)\" daquele dia são substituídas pelas do email; "
+            "lançamentos manuais (ex.: Saldo inicial) não são alterados."
         )
 
         if st.button("🔍 Buscar fechamentos do Gmail", key="btn_buscar_gmail"):
@@ -472,16 +517,19 @@ with tab1:
                 if st.button("✅ Confirmar importação", key="btn_confirmar_gmail"):
                     with st.spinner("Importando..."):
                         try:
-                            inseridos, duplicatas = lancar_importados_gmail(
+                            inseridos, substituidos = lancar_importados_gmail(
                                 _ano_mes_caixa, st.session_state["gmail_preview"]
                             )
                             # Recarrega caixa na sessão
                             st.session_state.pop("df_caixa_mes", None)
                             st.session_state.pop("cash_loaded_for", None)
                             st.session_state.pop("gmail_preview", None)
-                            msg = f"✅ **{inseridos}** lançamento(s) importado(s)."
-                            if duplicatas:
-                                msg += f" {duplicatas} duplicata(s) ignorada(s)."
+                            msg = f"✅ **{inseridos}** lançamento(s) do Suitable importado(s)."
+                            if substituidos:
+                                msg += (
+                                    f" {substituidos} linha(s) \"(Suitable)\" que já estavam nesses dias "
+                                    "foram substituídas pelas do email; lançamentos manuais foram preservados."
+                                )
                             st.success(msg)
                             st.rerun()
                         except Exception as e:
@@ -600,6 +648,14 @@ with tab2:
                 st.write("Saldo final  :", format_currency(sf_h))
                 st.markdown("</div>", unsafe_allow_html=True)
 
+                if not df_cat_h.empty and {"Categoria", "Entradas", "Saídas"} <= set(df_cat_h.columns):
+                    _cats_h = {
+                        str(r["Categoria"]): float(r["Entradas"] or 0) + float(r["Saídas"] or 0)
+                        for _, r in df_cat_h.iterrows()
+                        if pd.notna(r["Categoria"])
+                    }
+                    _render_gerencial(tabela_ponte(ponte_por_categoria(_cats_h)))
+
             st.markdown('<div class="tempero-section-title">📑 Resumo por conta (do relatório)</div>', unsafe_allow_html=True)
             if df_res_contas_h.empty:
                 st.info("Não foi possível extrair o resumo por conta da aba **Resumo**.")
@@ -670,6 +726,8 @@ with tab2:
             st.markdown('<div class="tempero-card">', unsafe_allow_html=True)
             st.write("Resultado do período:", format_currency(resultado_consolidado))
             st.markdown("</div>", unsafe_allow_html=True)
+
+            _render_gerencial(df_gerencial)
 
             st.markdown('<div class="tempero-section-title">📌 Resumo por categoria</div>', unsafe_allow_html=True)
             st.markdown(
@@ -1044,7 +1102,7 @@ with tab5:
         _dados_cats_anual = {}
         for linha in linhas_dre:
             cat = linha["Categoria"]
-            if cat == "__ Resultado __":
+            if str(cat).startswith("__"):
                 continue
             for mes in meses_anual:
                 if mes not in _dados_cats_anual:
@@ -1052,29 +1110,30 @@ with tab5:
                 _dados_cats_anual[mes][cat] = linha.get(mes, 0.0)
 
         # --- Cards de resumo ---
-        receita_total = sum(
-            abs(_dados_cats_anual.get(m, {}).get("Vendas / Receitas", 0.0))
-            for m in meses_anual
-        )
-        resultado_acumulado = sum(resumos_anual.get(m, {}).get("resultado", 0.0) for m in meses_anual)
-        invest_acumulado = sum(
-            abs(_dados_cats_anual.get(m, {}).get("Investimentos (Aplicações)", 0.0))
-            for m in meses_anual
-        )
-        resultado_operacional = resultado_acumulado + invest_acumulado
+        _pontes_anual = {m: ponte_por_categoria(_dados_cats_anual.get(m, {})) for m in meses_anual}
+        receita_total = sum(abs(p_["receita"]) for p_ in _pontes_anual.values())
+        operacional_total = sum(p_["operacional"] for p_ in _pontes_anual.values())
+        retiradas_total = sum(abs(p_["retiradas"]) for p_ in _pontes_anual.values())
+        # aplicações líquidas: positivo = guardou dinheiro; negativo = resgatou mais do que aplicou
+        aplicado_liquido = -sum(p_["aplicacoes"] for p_ in _pontes_anual.values())
 
         n_meses = len(meses_anual) or 1
-        media_resultado = resultado_operacional / n_meses
+        media_operacional = operacional_total / n_meses
 
         col1, col2, col3, col4 = st.columns(4)
         with col1:
-            st.markdown(metric_card_html("Receita do ano", format_currency(receita_total)), unsafe_allow_html=True)
+            st.markdown(metric_card_html("Receita no período", format_currency(receita_total)), unsafe_allow_html=True)
         with col2:
-            st.markdown(metric_card_html("Sobra média por mês", format_currency(media_resultado)), unsafe_allow_html=True)
+            st.markdown(metric_card_html("Resultado operacional / mês", format_currency(media_operacional)), unsafe_allow_html=True)
         with col3:
-            st.markdown(metric_card_html("Sobrou no ano", format_currency(resultado_operacional)), unsafe_allow_html=True)
+            st.markdown(metric_card_html("Retiradas dos sócios", format_currency(retiradas_total)), unsafe_allow_html=True)
         with col4:
-            st.markdown(metric_card_html("Investido no ano", format_currency(invest_acumulado)), unsafe_allow_html=True)
+            st.markdown(metric_card_html("Aplicado líquido", format_currency(aplicado_liquido)), unsafe_allow_html=True)
+        st.caption(
+            "Resultado operacional = receita − custos, sem aplicações/resgates e sem retiradas. "
+            "Retiradas = Transferência Interna / Sócios + Sangria. "
+            "Aplicado líquido = aplicações − resgates (negativo: a loja usou reserva)."
+        )
 
         st.markdown("---")
 
@@ -1082,6 +1141,13 @@ with tab5:
         st.markdown('<div class="tempero-section-title">DRE mensal por categoria</div>', unsafe_allow_html=True)
 
         df_dre = pd.DataFrame(linhas_dre)
+        # Linhas gerenciais no fim da tabela (o __ Resultado __ já existente é a variação de caixa)
+        _extra = [
+            {"Categoria": "__ Resultado operacional __", **{m: _pontes_anual[m]["operacional"] for m in meses_anual}},
+            {"Categoria": "__ Retiradas dos sócios __", **{m: _pontes_anual[m]["retiradas"] for m in meses_anual}},
+            {"Categoria": "__ Resultado após retiradas __", **{m: _pontes_anual[m]["apos_retiradas"] for m in meses_anual}},
+        ]
+        df_dre = pd.concat([df_dre, pd.DataFrame(_extra)], ignore_index=True)
         df_dre_display = df_dre.copy()
         for mes in meses_anual:
             df_dre_display[mes] = df_dre_display[mes].apply(
@@ -1098,26 +1164,32 @@ with tab5:
         # --- Barra de CMV ---
         st.markdown('<div class="tempero-section-title">CMV — custo de insumos sobre receita</div>', unsafe_allow_html=True)
 
-        cmv_por_mes = calcular_cmv(resumos_anual, _dados_cats_anual)
+        cmv_por_mes, cmv_mm_por_mes = cmv_mensal_e_media_movel(meses_anual, _dados_cats_anual)
         for mes in meses_anual:
             cmv = cmv_por_mes.get(mes)
             if cmv is None:
                 continue
             perc = cmv * 100
-            if perc > 32:
+            mm = cmv_mm_por_mes.get(mes)
+            perc_mm = (mm if mm is not None else cmv) * 100
+            # a cor segue a média móvel de 3 meses (o mês isolado oscila com o calendário de boletos)
+            if perc_mm > 32:
                 label_cor = "🔴"
-            elif perc > 28:
+            elif perc_mm > 28:
                 label_cor = "🟡"
             else:
                 label_cor = "🟢"
 
             st.markdown(
-                f"**{mes}** {label_cor} &nbsp; `{perc:.1f}%`",
+                f"**{mes}** {label_cor} &nbsp; mês `{perc:.1f}%` &nbsp;·&nbsp; média 3 meses `{perc_mm:.1f}%`",
                 unsafe_allow_html=True,
             )
             st.progress(min(perc / 50, 1.0))  # escala: 50% = barra cheia
 
-        st.caption("Referência saudável para marmitarias: 28–32%")
+        st.caption(
+            "CMV = (Fornecedores e Insumos + Embalagens) ÷ Receita. "
+            "Referência para marmitarias: 28–32%. A receita é líquida de comissão do iFood e taxa de cartão."
+        )
 
         st.markdown("---")
 
