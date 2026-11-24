@@ -44,6 +44,7 @@ from modules.ui import inject_css, metric_card_html
 from modules.utils import format_currency, get_ano_mes, normalizar_texto, parse_numero_br, slugify
 from modules.validacao import exibir_painel_validacao, validar_consistencia_fechamento
 from modules.controle_anual import carregar_dre_anual, gerar_alertas, selecionar_versoes_recentes
+from modules.conferencia import TIPOS as _TIPOS_CONF, carregar_relatorios_recentes, conferir, resumo_por_tipo
 from modules.historico_edicao import aplicar_ajustes_e_gerar_excel
 from modules.canais import CANAIS_ORDEM, receita_por_canal_dict, tabela_canais
 from modules.gerencial import (
@@ -1465,3 +1466,47 @@ with tab5:
                     st.warning(alerta["texto"])
                 else:
                     st.success(alerta["texto"])
+
+        st.markdown("---")
+
+        # --- Conferência geral dos fechamentos salvos ---
+        st.markdown('<div class="tempero-section-title">🔎 Conferência geral</div>', unsafe_allow_html=True)
+        st.caption(
+            "Varre a versão mais recente de cada mês salvo e aponta o que merece revisão: saldo inicial contado "
+            "como receita, A Classificar, mesmo favorecido em categorias diferentes, totais que não fecham, "
+            "lançamentos duplicados e lançamentos manuais no caixa. Só leitura: nada é alterado."
+        )
+        if st.button("Rodar conferência geral", key="conf_geral_rodar"):
+            with st.spinner("Lendo os fechamentos do Drive..."):
+                try:
+                    _reps_conf, _avisos_conf = carregar_relatorios_recentes()
+                    st.session_state["conf_geral"] = {
+                        "achados": conferir(_reps_conf),
+                        "meses": sorted(_reps_conf),
+                        "avisos": _avisos_conf,
+                    }
+                except Exception as e:
+                    st.session_state.pop("conf_geral", None)
+                    st.error(f"Erro ao rodar a conferência: {e}")
+
+        _conf = st.session_state.get("conf_geral")
+        if _conf:
+            st.caption(f"Meses conferidos: {', '.join(_conf['meses']) or 'nenhum'}.")
+            for _a in _conf["avisos"]:
+                st.warning(_a)
+            _achados = _conf["achados"]
+            st.dataframe(resumo_por_tipo(_achados), use_container_width=True, hide_index=True)
+            if not _achados:
+                st.success("Nenhum achado: os fechamentos salvos passaram em todas as verificações.")
+            for _tipo, _rotulo in _TIPOS_CONF.items():
+                _itens = [a for a in _achados if a["tipo"] == _tipo]
+                if not _itens:
+                    continue
+                with st.expander(f"{_rotulo} ({len(_itens)})", expanded=any(a["gravidade"] == "erro" for a in _itens)):
+                    for _a in _itens:
+                        _msg = f"**{_a['mes']}** — {_a['texto']}"
+                        (st.error if _a["gravidade"] == "erro" else st.warning)(_msg)
+            st.caption(
+                "Para corrigir: Conferência & Categorias → Fonte: Histórico (Drive) → editar categorias / "
+                "excluir lançamentos (gera uma nova versão do mês)."
+            )
