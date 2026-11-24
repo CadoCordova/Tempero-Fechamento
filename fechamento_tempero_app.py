@@ -795,16 +795,19 @@ with tab3:
                 st.dataframe(df_cat_disp, use_container_width=True)
 
             st.markdown("---")
-            st.markdown("**Movimentos (do relatório) — editar categorias**")
+            st.markdown("**Movimentos (do relatório) — editar categorias / excluir lançamentos**")
             if df_mov_h.empty:
                 st.info("Este relatório não possui a aba **Movimentos**.")
             else:
                 st.caption(
-                    "Só a **Categoria** pode ser alterada. Valores, entradas, saídas e resultado do período não mudam; "
-                    "muda a abertura por categoria, a visão Gerencial e o Controle Anual. "
-                    "Ao salvar, é gerada uma **nova versão** do fechamento (a mais recente vale no Controle Anual)."
+                    "Você pode **trocar a Categoria** ou marcar **Excluir** (ex.: saldo inicial do caixa, que não é receita). "
+                    "Trocar categoria não muda entradas, saídas nem resultado; excluir recalcula os totais. "
+                    "As alterações ficam guardadas ao trocar o filtro e só valem ao clicar em salvar: é gerada uma "
+                    "**nova versão** do fechamento (a mais recente vale no Controle Anual)."
                 )
                 df_mov_h = df_mov_h.reset_index(drop=True)
+                _fid = st.session_state.get("hist_loaded_file_id")
+                _store = st.session_state.setdefault(f"hist_edits_{_fid}", {"cat": {}, "del": set()})
                 df_view = df_mov_h.copy()
                 if "Data" in df_view.columns:
                     df_view["Data"] = (
@@ -819,21 +822,47 @@ with tab3:
                     _mask = df_view.apply(
                         lambda r: _b in normalizar_texto(f"{r.get('Descrição', '')} {r.get('Categoria', '')}"), axis=1
                     )
+                # base do editor: fixa por filtro (o editor guarda só as mudanças em cima dela)
+                _base_key = f"hist_base_{_fid}_{_busca}"
+                if _base_key not in st.session_state:
+                    _b0 = df_view[_mask].copy()
+                    for i in _b0.index:
+                        if i in _store["cat"]:
+                            _b0.loc[i, "Categoria"] = _store["cat"][i]
+                    _b0["Excluir"] = [i in _store["del"] for i in _b0.index]
+                    st.session_state[_base_key] = _b0
                 _ed = st.data_editor(
-                    df_view[_mask],
+                    st.session_state[_base_key],
                     use_container_width=True,
                     hide_index=True,
                     disabled=[c for c in df_view.columns if c != "Categoria"],
-                    column_config={"Categoria": st.column_config.SelectboxColumn("Categoria", options=_cats_h)},
-                    key=f"hist_editor_{st.session_state.get('hist_loaded_file_id')}_{_busca}",
+                    column_config={
+                        "Categoria": st.column_config.SelectboxColumn("Categoria", options=_cats_h),
+                        "Excluir": st.column_config.CheckboxColumn("Excluir"),
+                    },
+                    key=f"hist_editor_{_fid}_{_busca}",
                 )
-                _ajustes = {
-                    int(i): _ed.loc[i, "Categoria"]
-                    for i in _ed.index
-                    if _ed.loc[i, "Categoria"] != df_mov_h.loc[i, "Categoria"]
-                }
-                if _ajustes:
-                    st.warning(f"{len(_ajustes)} lançamento(s) com categoria alterada (ainda não salvo).")
+                for i in _ed.index:
+                    if bool(_ed.loc[i, "Excluir"]):
+                        _store["del"].add(int(i))
+                    else:
+                        _store["del"].discard(int(i))
+                    if _ed.loc[i, "Categoria"] != df_mov_h.loc[i, "Categoria"]:
+                        _store["cat"][int(i)] = _ed.loc[i, "Categoria"]
+                    else:
+                        _store["cat"].pop(int(i), None)
+                _ajustes = {i: c for i, c in _store["cat"].items() if i not in _store["del"]}
+                _exclusoes = set(_store["del"])
+                if _ajustes or _exclusoes:
+                    st.warning(
+                        f"{len(_ajustes)} categoria(s) alterada(s) e {len(_exclusoes)} lançamento(s) marcado(s) para excluir "
+                        "(ainda não salvo)."
+                    )
+                    for i in sorted(_exclusoes)[:20]:
+                        st.caption(
+                            f"• EXCLUIR {df_view.loc[i, 'Data']} | {format_currency(float(df_mov_h.loc[i, 'Valor']))} | "
+                            f"{str(df_mov_h.loc[i, 'Descrição'])[:60]} ({df_mov_h.loc[i, 'Categoria']})"
+                        )
                     for i, c in list(_ajustes.items())[:20]:
                         st.caption(
                             f"• {df_view.loc[i, 'Data']} | {format_currency(float(df_mov_h.loc[i, 'Valor']))} | "
@@ -846,7 +875,7 @@ with tab3:
                     )
                     if st.button("💾 Salvar como nova versão", key="hist_edit_save", type="primary"):
                         try:
-                            _novo_mov, _xl, _nome_p = aplicar_ajustes_e_gerar_excel(rep, _ajustes)
+                            _novo_mov, _xl, _nome_p = aplicar_ajustes_e_gerar_excel(rep, _ajustes, exclusoes=_exclusoes)
                             _ts = datetime.now().strftime("%Y%m%d_%H%M%S")
                             _fname = f"fechamento_tempero_{slugify(_nome_p)}_{_ts}.xlsx"
                             upload_history_to_gdrive(_xl, _fname)
@@ -861,6 +890,9 @@ with tab3:
                                     _msg += " Versão anterior enviada para a lixeira."
                                 except Exception as e:
                                     _msg += f" Atenção: não consegui apagar a versão anterior ({e}); o Controle Anual usa a mais recente."
+                            for k in list(st.session_state.keys()):
+                                if k.startswith(("hist_edits_", "hist_base_", "hist_editor_")):
+                                    st.session_state.pop(k, None)
                             for k in ("hist_report_loaded", "hist_report_name", "hist_loaded_file_id", "hist_selected_name_sidebar"):
                                 st.session_state.pop(k, None)
                             st.session_state["hist_edit_msg"] = _msg

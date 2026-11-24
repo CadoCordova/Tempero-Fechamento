@@ -30,20 +30,31 @@ def _resumo_por_conta(df_mov: pd.DataFrame) -> pd.DataFrame:
 
 
 def aplicar_ajustes_e_gerar_excel(
-    rep: dict, ajustes: dict[int, str], nome_arquivo_fallback: str = ""
+    rep: dict,
+    ajustes: dict[int, str],
+    nome_arquivo_fallback: str = "",
+    exclusoes: set[int] | None = None,
 ) -> tuple[pd.DataFrame, BytesIO, str]:
     """
     rep: dict de load_fechamento_report_from_gdrive (movimentos, consolidado, resumo_contas, dinheiro).
     ajustes: {posição da linha em movimentos: nova categoria}.
+    exclusoes: posições (em movimentos) a retirar do fechamento (ex.: saldo inicial do caixa, que não é
+    receita). Quando houver, entradas/saídas/resultado são recalculados a partir dos movimentos e as linhas
+    de dinheiro correspondentes saem também da aba Dinheiro.
     Retorna (df_mov_novo, excel, nome_do_periodo).
     """
-    df_mov = rep["movimentos"].copy()
+    exclusoes = {int(i) for i in (exclusoes or set())}
+    df_mov = rep["movimentos"].copy().reset_index(drop=True)
     df_mov["Valor"] = pd.to_numeric(df_mov["Valor"], errors="coerce").fillna(0.0)
     col_cat = df_mov.columns.get_loc("Categoria")
     for pos, cat in ajustes.items():
-        if not cat:
+        if not cat or int(pos) in exclusoes:
             continue
         df_mov.iloc[int(pos), col_cat] = cat
+
+    df_removidas = df_mov.loc[sorted(exclusoes)] if exclusoes else df_mov.iloc[0:0]
+    if exclusoes:
+        df_mov = df_mov.drop(index=sorted(exclusoes)).reset_index(drop=True)
 
     entradas_cat: dict[str, float] = defaultdict(float)
     saidas_cat: dict[str, float] = defaultdict(float)
@@ -63,12 +74,37 @@ def aplicar_ajustes_e_gerar_excel(
     if df_consol is None or df_consol.empty:
         raise ValueError("Este fechamento não tem a aba ResumoDados; não dá para gerar uma nova versão.")
     df_res = rep.get("resumo_contas")
-    if df_res is None or df_res.empty or not {"Conta", "Entradas", "Saídas", "Resultado"} <= set(df_res.columns):
+    if exclusoes or df_res is None or df_res.empty or not {"Conta", "Entradas", "Saídas", "Resultado"} <= set(df_res.columns):
         df_res = _resumo_por_conta(df_mov)
 
     df_din = rep.get("dinheiro")
     if df_din is None:
         df_din = pd.DataFrame(columns=["Data", "Descrição", "Tipo", "Valor"])
+    if exclusoes:
+        # recalcula o consolidado a partir dos movimentos que ficaram
+        df_consol = df_consol.copy()
+        v = df_mov["Valor"]
+        df_consol.loc[df_consol.index[0], "Entradas totais"] = float(v[v > 0].sum())
+        df_consol.loc[df_consol.index[0], "Saídas totais"] = float(v[v < 0].sum())
+        df_consol.loc[df_consol.index[0], "Resultado do período"] = float(v.sum())
+        saldo_ini = float(pd.to_numeric(df_consol.iloc[0].get("Saldo inicial"), errors="coerce") or 0.0)
+        df_consol.loc[df_consol.index[0], "Saldo final"] = saldo_ini + float(v.sum())
+        # tira da aba Dinheiro as linhas excluídas (mesma data + descrição + valor)
+        rem = df_removidas[df_removidas["Conta"] == "Dinheiro"]
+        if len(rem) and not df_din.empty:
+            chaves = {
+                (str(pd.to_datetime(r["Data"]).date()), str(r["Descrição"]).strip(), round(abs(float(r["Valor"])), 2))
+                for _, r in rem.iterrows()
+            }
+            manter = []
+            for _, r in df_din.iterrows():
+                k = (str(pd.to_datetime(r["Data"], errors="coerce").date()), str(r["Descrição"]).strip(), round(abs(float(r["Valor"])), 2))
+                if k in chaves:
+                    chaves.discard(k)
+                    manter.append(False)
+                else:
+                    manter.append(True)
+            df_din = df_din[manter].reset_index(drop=True)
 
     nome_periodo = str(df_consol.iloc[0].get("Nome do período") or nome_arquivo_fallback or "periodo")
     excel = gerar_excel_fechamento(
