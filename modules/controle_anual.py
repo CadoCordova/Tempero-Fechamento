@@ -30,6 +30,7 @@ CATEGORIAS_DRE = [
     "Energia Elétrica",
     "Nutricionista",
     "Sangria",
+    "Investimento na Loja (Imobilizado)",
     "Investimentos (Aplicações)",
     "Rendimentos de Aplicações",
     "Internet",
@@ -48,6 +49,14 @@ def _normalizar(txt) -> str:
         return ""
     s = str(txt).upper()
     return unicodedata.normalize("NFD", s).encode("ascii", "ignore").decode("ascii")
+
+
+def _chave_versao(f: dict) -> str:
+    """Ordena versões do mesmo mês: carimbo _YYYYMMDD_HHMMSS do nome; senão modifiedTime."""
+    m = re.search(r"_(\d{8})_(\d{6})\.xlsx$", str(f.get("name", "")))
+    if m:
+        return m.group(1) + m.group(2)
+    return re.sub(r"\D", "", str(f.get("modifiedTime", "")))[:14]
 
 
 def _ler_categorias_fechamento(buf) -> dict[str, float]:
@@ -96,11 +105,18 @@ def carregar_dre_anual() -> tuple[list[str], list[dict], dict]:
     dados: dict[str, dict[str, float]] = {}  # {ano_mes: {categoria: valor}}
     resumos: dict[str, dict] = {}            # {ano_mes: {entradas, saidas, resultado}}
 
+    # Se o mesmo mês foi salvo mais de uma vez, vale a versão mais recente
+    # (a listagem vem do mais novo para o mais antigo e a versão antiga estava vencendo).
+    mais_recente: dict[str, dict] = {}
     for f in fechamentos:
-        nome = f.get("name", "")
-        ano_mes = get_ano_mes(nome)
+        ano_mes = get_ano_mes(f.get("name", ""))
         if not ano_mes:
             continue
+        atual = mais_recente.get(ano_mes)
+        if atual is None or _chave_versao(f) > _chave_versao(atual):
+            mais_recente[ano_mes] = f
+
+    for ano_mes, f in mais_recente.items():
         try:
             buf = download_history_file(f["id"])
 

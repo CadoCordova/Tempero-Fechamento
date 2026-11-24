@@ -1,12 +1,14 @@
 import json
 from pathlib import Path
 
+import pandas as pd
 import streamlit as st
 
 from modules.gdrive import load_json_from_gdrive_history, save_json_to_gdrive_history
 from modules.utils import normalizar_texto
 
 RULES_PATH = Path("regras_categorias.json")
+RECLASS_PATH = Path("reclassificacoes_pontuais.json")
 CATEGORIAS_PATH = Path("categorias_personalizadas.json")
 
 CATEGORIAS_PADRAO = [
@@ -26,6 +28,7 @@ CATEGORIAS_PADRAO = [
     "Rendimentos de Aplicações",
     "Fatura Cartão",
     "Transferência Interna / Sócios",
+    "Investimento na Loja (Imobilizado)",
     "A Classificar",
 ]
 
@@ -65,6 +68,59 @@ def salvar_regras(regras: dict):
         save_json_to_gdrive_history(RULES_PATH.name, regras)
     except Exception:
         pass
+
+
+# ---------------------------------------------------------------------------
+# Reclassificações pontuais (um lançamento específico, sem virar regra)
+# ---------------------------------------------------------------------------
+# Regras por descrição valem para TODOS os lançamentos iguais (ex.: todo PIX para
+# a mesma pessoa). Quando só um lançamento é diferente (ex.: PIX de R$ 42.000 que foi
+# compra de veículo da loja), ele é guardado por data + valor + descrição.
+
+def chave_reclassificacao(data, valor, descricao) -> str:
+    dt = pd.to_datetime(data, dayfirst=True, errors="coerce")
+    dia = dt.strftime("%Y-%m-%d") if not pd.isna(dt) else str(data)
+    try:
+        v = f"{abs(float(valor)):.2f}"
+    except (TypeError, ValueError):
+        v = str(valor)
+    return f"{dia}|{v}|{normalizar_texto(descricao)[:60].strip()}"
+
+
+def carregar_reclassificacoes() -> dict:
+    """Drive → arquivo local. Retorna {chave: categoria}."""
+    data_drive = load_json_from_gdrive_history(RECLASS_PATH.name)
+    if isinstance(data_drive, dict):
+        return data_drive
+    if RECLASS_PATH.exists():
+        try:
+            with RECLASS_PATH.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict):
+                    return data
+        except Exception:
+            pass
+    return {}
+
+
+def salvar_reclassificacoes(reclass: dict):
+    """Salva no Drive (erro de Drive sobe para a tela: não pode falhar em silêncio)."""
+    save_json_to_gdrive_history(RECLASS_PATH.name, reclass)
+    try:
+        with RECLASS_PATH.open("w", encoding="utf-8") as f:
+            json.dump(reclass, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+
+def get_reclassificacoes_sessao() -> dict:
+    if "reclassificacoes" not in st.session_state:
+        st.session_state["reclassificacoes"] = carregar_reclassificacoes()
+    return st.session_state["reclassificacoes"]
+
+
+def reload_reclassificacoes_sessao():
+    st.session_state["reclassificacoes"] = carregar_reclassificacoes()
 
 
 # ---------------------------------------------------------------------------
@@ -137,17 +193,25 @@ def reload_regras_sessao():
     st.session_state["regras_categoria"] = carregar_regras()
 
 
-def classificar_categoria(mov: dict, regras: dict | None = None) -> str:
+def classificar_categoria(mov: dict, regras: dict | None = None, reclass: dict | None = None) -> str:
     """
     Classifica um movimento em uma categoria.
     Aceita um dict de regras externo; se None, usa as regras da sessão.
+    Reclassificação pontual (data + valor + descrição) vence qualquer regra.
     """
     if regras is None:
         regras = get_regras_sessao()
+    if reclass is None:
+        reclass = get_reclassificacoes_sessao()
 
     desc_orig = mov.get("descricao")
     desc_norm = normalizar_texto(desc_orig)
     valor = mov.get("valor", 0.0)
+
+    if reclass:
+        chave = chave_reclassificacao(mov.get("data"), valor, desc_orig)
+        if chave in reclass:
+            return reclass[chave]
 
     for padrao, categoria in regras.items():
         if padrao in desc_norm:

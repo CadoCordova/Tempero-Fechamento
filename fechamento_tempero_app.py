@@ -18,10 +18,14 @@ from modules.categorias import (
     CATEGORIAS_PADRAO,
     carregar_categorias_personalizadas,
     carregar_regras,
+    chave_reclassificacao,
     classificar_categoria,
+    get_reclassificacoes_sessao,
     get_regras_sessao,
+    reload_reclassificacoes_sessao,
     reload_regras_sessao,
     salvar_categorias_personalizadas,
+    salvar_reclassificacoes,
     salvar_regras,
 )
 from modules.excel import formatar_tabela_excel
@@ -863,13 +867,26 @@ with tab3:
 
             if st.button("Salvar regras de categorização"):
                 regras = carregar_regras()
+                _reclass_atual = get_reclassificacoes_sessao()
+                # Regra é por descrição e vale para todos os lançamentos iguais. Se a mesma
+                # descrição aparece com categorias diferentes no mês (ex.: PIX de R$ 5.500 e de
+                # R$ 42.000 para a mesma pessoa), ela é ambígua e NÃO vira regra.
+                _desc_norm_col = edited_df["Descrição"].map(normalizar_texto)
+                _n_cat = edited_df.groupby(_desc_norm_col)["Categoria"].nunique()
+                _ambiguas = set(_n_cat[_n_cat > 1].index)
                 alteracoes = 0
+                puladas: set[str] = set()
                 for _, row in edited_df.iterrows():
                     desc = row.get("Descrição")
                     cat = row.get("Categoria")
                     if not desc or not cat:
                         continue
                     desc_norm = normalizar_texto(desc)
+                    if desc_norm in _ambiguas or chave_reclassificacao(
+                        row.get("Data"), row.get("Valor"), desc
+                    ) in _reclass_atual:
+                        puladas.add(str(desc)[:50])
+                        continue
                     if regras.get(desc_norm) != cat:
                         regras[desc_norm] = cat
                         alteracoes += 1
@@ -879,7 +896,67 @@ with tab3:
                     f"{alteracoes} regra(s) de categorização salva(s). "
                     "Os próximos fechamentos já virão com essas categorias aplicadas."
                 )
-                st.rerun()
+                if puladas:
+                    st.warning(
+                        f"{len(puladas)} descrição(ões) não viraram regra (categorias diferentes para a "
+                        "mesma descrição, ou lançamento reclassificado à mão). Para um lançamento "
+                        "específico, use o quadro abaixo."
+                    )
+                else:
+                    st.rerun()
+            st.markdown("</div>", unsafe_allow_html=True)
+
+            # ---- Reclassificar um lançamento específico ----
+            st.markdown('<div class="tempero-card">', unsafe_allow_html=True)
+            st.markdown("**Reclassificar um lançamento específico**")
+            st.markdown(
+                '<div class="tempero-section-sub">Vale só para este lançamento (data + valor). '
+                "Não vira regra: os outros lançamentos com a mesma descrição não mudam. "
+                "Ex.: o PIX de R\\$ 42.000 que foi compra do carro da loja.</div>",
+                unsafe_allow_html=True,
+            )
+            _df_rc = df_mov.copy()
+            _df_rc["_abs"] = _df_rc["Valor"].abs()
+            _df_rc = _df_rc.sort_values("_abs", ascending=False)
+            _opcoes_rc = {}
+            for _i, _r in _df_rc.iterrows():
+                _dt = pd.to_datetime(_r["Data"], errors="coerce")
+                _dt_txt = "" if pd.isna(_dt) else _dt.strftime("%d/%m/%Y")
+                _opcoes_rc[
+                    f"{_dt_txt} · {_r['Conta']} · {str(_r['Descrição'])[:55]} · "
+                    f"{format_currency(_r['Valor'])} · hoje: {_r['Categoria']}"
+                ] = _i
+            _rotulo_rc = st.selectbox("Lançamento (os maiores valores primeiro):", list(_opcoes_rc.keys()), key="rc_lancamento")
+            _padrao_cat = "Investimento na Loja (Imobilizado)"
+            _idx_cat = categorias_possiveis.index(_padrao_cat) if _padrao_cat in categorias_possiveis else 0
+            _cat_rc = st.selectbox("Nova categoria:", categorias_possiveis, index=_idx_cat, key="rc_categoria")
+            if st.button("Aplicar só a este lançamento", key="rc_aplicar"):
+                _r = df_mov.loc[_opcoes_rc[_rotulo_rc]]
+                _reclass = dict(get_reclassificacoes_sessao())
+                _reclass[chave_reclassificacao(_r["Data"], _r["Valor"], _r["Descrição"])] = _cat_rc
+                try:
+                    salvar_reclassificacoes(_reclass)
+                    reload_reclassificacoes_sessao()
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Não consegui salvar no Google Drive: {e}")
+
+            _reclass_vigentes = get_reclassificacoes_sessao()
+            if _reclass_vigentes:
+                st.markdown("**Reclassificações salvas** (valem para qualquer fechamento que traga esse lançamento):")
+                _df_rv = pd.DataFrame(
+                    [{"Lançamento (data | valor | descrição)": k, "Categoria": v} for k, v in _reclass_vigentes.items()]
+                )
+                st.dataframe(_df_rv, use_container_width=True, hide_index=True)
+                _rm = st.selectbox("Remover uma reclassificação:", ["—"] + list(_reclass_vigentes.keys()), key="rc_remover")
+                if _rm != "—" and st.button("Remover", key="rc_remover_btn"):
+                    _novo = {k: v for k, v in _reclass_vigentes.items() if k != _rm}
+                    try:
+                        salvar_reclassificacoes(_novo)
+                        reload_reclassificacoes_sessao()
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Não consegui salvar no Google Drive: {e}")
             st.markdown("</div>", unsafe_allow_html=True)
 
 
@@ -1154,21 +1231,26 @@ with tab5:
                     "aplicou mais do que resgatou"), unsafe_allow_html=True)
 
         # Resumo em frases (R$ escapado: o Streamlit trata $ como fórmula)
+        investimento_loja_total = abs(sum(p_["investimento_loja"] for p_ in _pontes_anual.values()))
+        _frase = (
+            f"Em {n_meses} meses a operação gerou {format_currency(operacional_total)} e os sócios retiraram "
+            f"{format_currency(retiradas_total)}"
+        )
         if dif_apos_retiradas >= 0:
-            _frase = (
-                f"Em {n_meses} meses a operação gerou {format_currency(operacional_total)} e os sócios retiraram "
-                f"{format_currency(retiradas_total)}: sobraram **{format_currency(dif_apos_retiradas)}**."
-            )
+            _frase += f": sobraram **{format_currency(dif_apos_retiradas)}**."
         else:
-            _frase = (
-                f"Em {n_meses} meses a operação gerou {format_currency(operacional_total)} e os sócios retiraram "
-                f"{format_currency(retiradas_total)}: as retiradas passaram da operação em "
-                f"**{format_currency(abs(dif_apos_retiradas))}**."
-            )
+            _frase += f": as retiradas passaram da operação em **{format_currency(abs(dif_apos_retiradas))}**."
+        if investimento_loja_total >= 0.005:
+            _dif2 = dif_apos_retiradas - investimento_loja_total
+            _frase += f" A loja também investiu {format_currency(investimento_loja_total)} em bens (veículo/equipamentos)"
+            if _dif2 < 0:
+                _frase += f", o que deixou **{format_currency(abs(_dif2))}** a mais do que a operação gerou."
+            else:
+                _frase += f"; ainda sobraram **{format_currency(_dif2)}**."
         if aplicado_liquido < 0:
-            _frase += f" Essa diferença veio de reservas (resgatou {format_currency(abs(aplicado_liquido))} a mais do que aplicou)."
+            _frase += f" Nas aplicações, resgatou {format_currency(abs(aplicado_liquido))} a mais do que aplicou."
         else:
-            _frase += f" Além disso, {format_currency(aplicado_liquido)} foram guardados em aplicações."
+            _frase += f" Nas aplicações, guardou {format_currency(aplicado_liquido)} a mais do que resgatou."
         _frase += f" Variação final do caixa no período: {format_currency(resultado_caixa_total)}."
         st.info(_frase.replace("$", "\\$"))
 

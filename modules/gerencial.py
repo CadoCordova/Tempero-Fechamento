@@ -22,6 +22,8 @@ import pandas as pd
 CAT_RECEITA = "Vendas / Receitas"
 CATS_SOCIOS = ("Transferência Interna / Sócios", "Sangria")
 CATS_APLICACAO = ("Investimentos (Aplicações)", "Rendimentos de Aplicações")
+# Compra de bem para a loja (veículo, equipamentos): não é custo do mês nem retirada
+CAT_INVESTIMENTO_LOJA = "Investimento na Loja (Imobilizado)"
 CATS_INSUMOS = ("Fornecedores e Insumos", "Embalagens")
 
 # Retirada de um único lançamento acima disso é tratada como "pontual"
@@ -45,13 +47,15 @@ def ponte_por_categoria(cats: dict[str, float]) -> dict:
     receita = float(cats.get(CAT_RECEITA, 0.0))
     retiradas = float(sum(cats.get(c, 0.0) for c in CATS_SOCIOS))
     aplicacoes = float(sum(cats.get(c, 0.0) for c in CATS_APLICACAO))
-    operacional = total - retiradas - aplicacoes
+    investimento_loja = float(cats.get(CAT_INVESTIMENTO_LOJA, 0.0))
+    operacional = total - retiradas - aplicacoes - investimento_loja
     return {
         "receita": receita,
         "custos": operacional - receita,
         "operacional": operacional,
         "retiradas": retiradas,
         "apos_retiradas": operacional + retiradas,
+        "investimento_loja": investimento_loja,
         "aplicacoes": aplicacoes,
         "variacao_caixa": total,
     }
@@ -102,6 +106,8 @@ def tabela_ponte(ponte: dict) -> pd.DataFrame:
              .replace(",", "."), ponte["retiradas_pontuais"])
         )
     linhas.append(("(=) Resultado após retiradas", ponte["apos_retiradas"]))
+    if abs(ponte.get("investimento_loja", 0.0)) >= 0.005:
+        linhas.append(("(−) Investimento na loja (veículo, equipamentos)", ponte["investimento_loja"]))
 
     por_conta = ponte.get("aplicacoes_por_conta") or {}
     if por_conta:
