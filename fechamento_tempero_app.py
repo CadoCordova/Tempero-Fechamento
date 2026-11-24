@@ -1118,22 +1118,59 @@ with tab5:
         aplicado_liquido = -sum(p_["aplicacoes"] for p_ in _pontes_anual.values())
 
         n_meses = len(meses_anual) or 1
-        media_operacional = operacional_total / n_meses
+        resultado_caixa_total = sum(p_["variacao_caixa"] for p_ in _pontes_anual.values())
+        dif_apos_retiradas = operacional_total - retiradas_total
+        # "mês comum" = mediana mensal: uma retirada pontual grande não distorce
+        _ret_mensais = sorted(abs(p_["retiradas"]) for p_ in _pontes_anual.values())
+        _meio = len(_ret_mensais) // 2
+        _retirada_mes_comum = (
+            _ret_mensais[_meio] if len(_ret_mensais) % 2
+            else (_ret_mensais[_meio - 1] + _ret_mensais[_meio]) / 2
+        ) if _ret_mensais else 0.0
 
         col1, col2, col3, col4 = st.columns(4)
         with col1:
-            st.markdown(metric_card_html("Receita no período", format_currency(receita_total)), unsafe_allow_html=True)
+            st.markdown(metric_card_html(
+                "Vendas", format_currency(receita_total),
+                f"soma de {n_meses} meses"), unsafe_allow_html=True)
         with col2:
-            st.markdown(metric_card_html("Resultado operacional / mês", format_currency(media_operacional)), unsafe_allow_html=True)
+            st.markdown(metric_card_html(
+                "Sobra da operação", format_currency(operacional_total),
+                f"vendas − todos os custos<br>≈ {format_currency(operacional_total / n_meses)} por mês"),
+                unsafe_allow_html=True)
         with col3:
-            st.markdown(metric_card_html("Retiradas dos sócios", format_currency(retiradas_total)), unsafe_allow_html=True)
+            st.markdown(metric_card_html(
+                "Retirada dos sócios", format_currency(retiradas_total),
+                f"transferências + sangria<br>mês comum ≈ {format_currency(_retirada_mes_comum)}"),
+                unsafe_allow_html=True)
         with col4:
-            st.markdown(metric_card_html("Aplicado líquido", format_currency(aplicado_liquido)), unsafe_allow_html=True)
-        st.caption(
-            "Resultado operacional = receita − custos, sem aplicações/resgates e sem retiradas. "
-            "Retiradas = Transferência Interna / Sócios + Sangria. "
-            "Aplicado líquido = aplicações − resgates (negativo: a loja usou reserva)."
-        )
+            if aplicado_liquido < 0:
+                st.markdown(metric_card_html(
+                    "Reservas usadas", format_currency(abs(aplicado_liquido)),
+                    "resgatou mais do que aplicou"), unsafe_allow_html=True)
+            else:
+                st.markdown(metric_card_html(
+                    "Guardado em aplicações", format_currency(aplicado_liquido),
+                    "aplicou mais do que resgatou"), unsafe_allow_html=True)
+
+        # Resumo em frases (R$ escapado: o Streamlit trata $ como fórmula)
+        if dif_apos_retiradas >= 0:
+            _frase = (
+                f"Em {n_meses} meses a operação gerou {format_currency(operacional_total)} e os sócios retiraram "
+                f"{format_currency(retiradas_total)}: sobraram **{format_currency(dif_apos_retiradas)}**."
+            )
+        else:
+            _frase = (
+                f"Em {n_meses} meses a operação gerou {format_currency(operacional_total)} e os sócios retiraram "
+                f"{format_currency(retiradas_total)}: as retiradas passaram da operação em "
+                f"**{format_currency(abs(dif_apos_retiradas))}**."
+            )
+        if aplicado_liquido < 0:
+            _frase += f" Essa diferença veio de reservas (resgatou {format_currency(abs(aplicado_liquido))} a mais do que aplicou)."
+        else:
+            _frase += f" Além disso, {format_currency(aplicado_liquido)} foram guardados em aplicações."
+        _frase += f" Variação final do caixa no período: {format_currency(resultado_caixa_total)}."
+        st.info(_frase.replace("$", "\\$"))
 
         st.markdown("---")
 

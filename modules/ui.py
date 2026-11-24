@@ -52,6 +52,11 @@ def inject_css():
             font-size: 1.4rem;
             font-weight: 700;
         }}
+        .tempero-metric-note {{
+            font-size: 0.78rem;
+            opacity: 0.9;
+            margin-top: 0.15rem;
+        }}
         .tempero-section-title {{
             font-weight: 700;
             color: {TEXT_DARK};
@@ -86,10 +91,12 @@ def inject_css():
     )
 
 
-def metric_card_html(label: str, value: str) -> str:
+def metric_card_html(label: str, value: str, nota: str | None = None) -> str:
+    nota_html = f'<div class="tempero-metric-note">{nota}</div>' if nota else ""
     return f"""
     <div class="tempero-metric-card">
       <div class="tempero-metric-label">{label}</div>
       <div class="tempero-metric-value">{value}</div>
+      {nota_html}
     </div>
     """
