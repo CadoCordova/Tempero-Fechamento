@@ -48,6 +48,7 @@ from modules.conferencia import TIPOS as _TIPOS_CONF, carregar_relatorios_recent
 from modules.historico_edicao import aplicar_ajustes_e_gerar_excel
 from modules.canais import CANAIS_ORDEM, receita_por_canal_dict, tabela_canais
 from modules.gerencial import (
+    BOLSOES,
     ponte_por_categoria,
     ponte_por_movimentos,
     tabela_ponte,
@@ -1377,6 +1378,61 @@ with tab5:
             _frase += f" Nas aplicações, guardou {format_currency(aplicado_liquido)} a mais do que resgatou."
         _frase += f" Variação final do caixa no período: {format_currency(resultado_caixa_total)}."
         st.info(_frase.replace("$", "\\$"))
+
+        # --- Reservas por bolsão (loja x trabalhista): o card acima soma tudo e esconde a troca entre elas ---
+        _res_m = {m: (resumos_anual.get(m, {}).get("reservas") or {}) for m in meses_anual}
+        if any(_res_m.values()):
+            st.markdown('<div class="tempero-section-title">Reservas por bolsão</div>', unsafe_allow_html=True)
+
+            def _soma_bolsao(b, campo):
+                return sum(_res_m[m].get(b, {}).get(campo, 0.0) for m in meses_anual)
+
+            _linhas_res = []
+            for _b in BOLSOES:
+                _ap, _rg = _soma_bolsao(_b, "aplicado"), _soma_bolsao(_b, "resgatado")
+                _rd = _soma_bolsao(_b, "rendimentos")
+                if abs(_ap) + abs(_rg) + abs(_rd) < 0.005:
+                    continue
+                _linhas_res.append({
+                    "Bolsão": _b, "Aplicado": _ap, "Resgatado": _rg,
+                    "Guardado (aplicado − resgatado)": _ap - _rg, "Rendimentos": _rd,
+                })
+            if _linhas_res:
+                _df_res = pd.DataFrame(_linhas_res)
+                _tot = {"Bolsão": "Total"}
+                for _c in _df_res.columns[1:]:
+                    _tot[_c] = float(_df_res[_c].sum())
+                _df_res = pd.concat([_df_res, pd.DataFrame([_tot])], ignore_index=True)
+                _df_show = _df_res.copy()
+                for _c in _df_show.columns[1:]:
+                    _df_show[_c] = _df_show[_c].apply(format_currency)
+                st.dataframe(_df_show, use_container_width=True, hide_index=True)
+
+                # mês a mês: guardado (+) / reserva diminuiu (−)
+                _mes_rows = []
+                for _b in BOLSOES:
+                    if not any(abs(_res_m[m].get(_b, {}).get("guardado", 0.0)) >= 0.005 for m in meses_anual):
+                        continue
+                    _linha = {"Bolsão": _b}
+                    for m in meses_anual:
+                        _linha[m] = format_currency(_res_m[m].get(_b, {}).get("guardado", 0.0))
+                    _mes_rows.append(_linha)
+                if _mes_rows:
+                    st.caption("Mês a mês — positivo: dinheiro guardado na reserva; negativo: a reserva diminuiu.")
+                    st.dataframe(pd.DataFrame(_mes_rows), use_container_width=True, hide_index=True)
+
+                _guardado_total = float(_df_res.iloc[-1]["Guardado (aplicado − resgatado)"])
+                _rend_total = float(_df_res.iloc[-1]["Rendimentos"])
+                if abs((_guardado_total - _rend_total) - aplicado_liquido) > 0.011:
+                    st.warning(
+                        "O total por bolsão não bate com o card acima: algum mês salvo não tem a aba Movimentos "
+                        "(só dá para abrir por conta os meses que têm)."
+                    )
+            st.caption(
+                "É fluxo do período, não saldo da conta. Dinheiro que muda de bolsão (ex.: PagBank → CDB do Itaú) "
+                "aparece como resgate em um e aplicação no outro: reduz uma reserva e aumenta a outra, sem mudar "
+                "o total. Ajustes lançados no caixa que citam o PagBank contam como reserva trabalhista."
+            )
 
         st.markdown("---")
 

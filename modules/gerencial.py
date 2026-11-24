@@ -87,6 +87,53 @@ def ponte_por_movimentos(df_mov: pd.DataFrame) -> dict:
     return ponte
 
 
+BOLSAO_LOJA = "Reserva da loja (Itaú)"
+BOLSAO_TRABALHISTA = "Reserva trabalhista (PagBank)"
+BOLSAO_OUTROS = "Outros ajustes de caixa"
+BOLSOES = (BOLSAO_LOJA, BOLSAO_TRABALHISTA, BOLSAO_OUTROS)
+
+
+def _bolsao_da_linha(conta, descricao) -> str:
+    c = str(conta or "").strip().lower()
+    if c in ("itau", "itaú"):
+        return BOLSAO_LOJA
+    if c == "pagseguro":
+        return BOLSAO_TRABALHISTA
+    # ajuste lançado no caixa que cita o PagBank pertence à reserva trabalhista
+    if "pagbank" in str(descricao or "").lower() or "pagseguro" in str(descricao or "").lower():
+        return BOLSAO_TRABALHISTA
+    return BOLSAO_OUTROS
+
+
+def reservas_por_bolsao(df_mov: pd.DataFrame) -> dict[str, dict[str, float]]:
+    """
+    Fluxo das aplicações por "bolsão": reserva da loja (Itaú), reserva trabalhista (PagBank) e ajustes.
+    Por bolsão: aplicado (dinheiro que entrou na reserva), resgatado (que saiu), guardado = aplicado − resgatado
+    (negativo = a reserva diminuiu) e rendimentos. É FLUXO do período, não saldo.
+    Uma mudança de dinheiro entre bolsões (ex.: PagBank → CDB Itaú) aparece como resgate em um e aplicação no outro.
+    """
+    out = {b: {"aplicado": 0.0, "resgatado": 0.0, "guardado": 0.0, "rendimentos": 0.0} for b in BOLSOES}
+    if df_mov is None or len(df_mov) == 0:
+        return out
+    df = df_mov.copy()
+    df["Valor"] = pd.to_numeric(df["Valor"], errors="coerce").fillna(0.0)
+    for _, r in df.iterrows():
+        cat = r.get("Categoria")
+        if cat not in CATS_APLICACAO:
+            continue
+        b = _bolsao_da_linha(r.get("Conta"), r.get("Descrição"))
+        v = float(r["Valor"])
+        if cat == "Rendimentos de Aplicações":
+            out[b]["rendimentos"] += v
+        elif v < 0:
+            out[b]["aplicado"] += -v
+        else:
+            out[b]["resgatado"] += v
+    for d in out.values():
+        d["guardado"] = d["aplicado"] - d["resgatado"]
+    return out
+
+
 def tabela_ponte(ponte: dict) -> pd.DataFrame:
     """DataFrame [Linha, Valor, % da receita] para tela e Excel."""
     receita = ponte["receita"]

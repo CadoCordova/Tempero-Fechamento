@@ -10,6 +10,7 @@ import pandas as pd
 from modules.gdrive import download_history_file, list_history_from_gdrive
 from modules.canais import receita_por_canal_dict
 from modules.gerencial import (
+    reservas_por_bolsao,
     CATS_SOCIOS,
     CAT_RECEITA,
     cmv_mensal_e_media_movel,
@@ -170,8 +171,10 @@ def carregar_dre_anual() -> tuple[list[str], list[dict], dict]:
                 buf.seek(0)
                 df_mv = pd.read_excel(buf, sheet_name="Movimentos", header=1)
                 resumos[ano_mes]["canais"] = receita_por_canal_dict(df_mv)
+                resumos[ano_mes]["reservas"] = reservas_por_bolsao(df_mv)
             except Exception:
                 resumos[ano_mes]["canais"] = {}
+                resumos[ano_mes]["reservas"] = {}
 
         except Exception:
             continue
