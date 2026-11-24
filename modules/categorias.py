@@ -26,6 +26,7 @@ CATEGORIAS_PADRAO = [
     "Aluguel Comercial",
     "Contabilidade e RH",
     "Dedetização / Controle de Pragas",
+    "Limpeza de Coifa",
     "Energia Elétrica",
     "Motoboy / Entregas",
     "Internet",
@@ -294,6 +295,9 @@ def _classificar_por_palavras(desc_norm: str, valor: float, conta: str | None) -
 
     if "ANTINSECT" in desc_norm:
         return "Dedetização / Controle de Pragas"
+
+    if "ECO PRO" in desc_norm and valor < 0:
+        return "Limpeza de Coifa"
 
     if "CIA ESTADUAL DE DIST" in desc_norm or "CEEE" in desc_norm or "ENERGIA ELETRICA" in desc_norm:
         return "Energia Elétrica"
