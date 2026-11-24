@@ -21,6 +21,13 @@ TOLERANCIA = 0.011  # centavos
 LIMITE_CAIXA_MANUAL = 200.0  # lançamento manual de caixa (sem "(Suitable)") a partir disso é listado
 LIMITE_DUPLICADO_DINHEIRO = 50.0
 
+# Categorias que entram juntas no CMV: o mesmo fornecedor vender insumo e embalagem não é inconsistência
+# (ex.: Guaíba Distribuidora). Para esta verificação são tratadas como uma só.
+GRUPO_EQUIVALENTE = {
+    "Fornecedores e Insumos": "Insumos e Embalagens (CMV)",
+    "Embalagens": "Insumos e Embalagens (CMV)",
+}
+
 TIPOS = {
     "saldo_inicial": "Saldo inicial contado como receita",
     "a_classificar": "Lançamentos A Classificar",
@@ -178,7 +185,8 @@ def achados_favorecidos(reps: dict[str, dict]) -> list[dict]:
         for _, r in df[(df["Valor"] < 0) & (df["Conta"] != "Dinheiro")].iterrows():
             fav = favorecido(r["Descrição"])
             if fav:
-                mapa[fav][r["Categoria"]].append((mes, float(r["Valor"])))
+                cat = GRUPO_EQUIVALENTE.get(r["Categoria"], r["Categoria"])
+                mapa[fav][cat].append((mes, float(r["Valor"])))
     out = []
     for fav, cats in mapa.items():
         if len(cats) < 2:
