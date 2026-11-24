@@ -829,9 +829,13 @@ with tab3:
                     for i in _b0.index:
                         if i in _store["cat"]:
                             _b0.loc[i, "Categoria"] = _store["cat"][i]
-                    _b0["Excluir"] = [i in _store["del"] for i in _b0.index]
+                    _b0["Excluir"] = pd.Series([i in _store["del"] for i in _b0.index], index=_b0.index, dtype=bool)
                     st.session_state[_base_key] = _b0
-                _ed = st.data_editor(
+                if st.session_state[_base_key].empty:
+                    st.info("Nenhum lançamento encontrado para esse filtro.")
+                    _ed = st.session_state[_base_key]
+                else:
+                  _ed = st.data_editor(
                     st.session_state[_base_key],
                     use_container_width=True,
                     hide_index=True,
