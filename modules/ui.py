@@ -43,6 +43,8 @@ def inject_css():
             padding: 0.9rem 1.1rem;
             border-radius: 0.8rem;
             box-shadow: 0 2px 8px rgba(0,0,0,0.18);
+            min-height: 7.6rem;
+            box-sizing: border-box;
         }}
         .tempero-metric-label {{
             font-size: 0.85rem;

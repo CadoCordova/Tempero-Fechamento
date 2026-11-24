@@ -1386,366 +1386,365 @@ with tab5:
         _frase += f" Variação final do caixa no período: {format_currency(resultado_caixa_total)}."
         st.info(_frase.replace("$", "\\$"))
 
-        # --- Saldos das reservas (digitados à mão) + conciliação com os fechamentos ---
-        st.markdown('<div class="tempero-section-title">Saldos das reservas</div>', unsafe_allow_html=True)
-        st.caption(
-            "O extrato da conta corrente não mostra o saldo dos CDBs, então o saldo real é lançado aqui, de preferência "
-            "no fim de cada mês. Duas reservas: Itaú (loja) e PagBank (trabalhista). Vale o saldo LÍQUIDO (o que dá "
-            "para resgatar de fato)."
-        )
-        if "saldos_reservas" not in st.session_state:
-            st.session_state["saldos_reservas"] = carregar_saldos()
-        _sr = st.session_state["saldos_reservas"]
-        _cob = cobertura_reservas(_sr)
-        _ult_loja, _ult_trab = ultimo_saldo(_sr, BOLSAO_LOJA), ultimo_saldo(_sr, BOLSAO_TRABALHISTA)
+        _t_alr, _t_res, _t_dre, _t_cmv, _t_conf = st.tabs(["🚨 Alertas", "🏦 Reservas", "📊 DRE e canais", "🥘 CMV", "🔎 Conferência"])
 
-        def _fmt_data_br(txt):
-            return pd.to_datetime(txt).strftime("%d/%m/%Y")
+        with _t_alr:
+            # --- Alertas automáticos ---
+            st.markdown('<div class="tempero-section-title">Alertas do período</div>', unsafe_allow_html=True)
 
-        _c1, _c2, _c3 = st.columns(3)
-        with _c1:
-            st.markdown(metric_card_html(
-                "Reserva da loja (Itaú)", format_currency(total_do_registro(_ult_loja)),
-                (f"saldo líquido em {_fmt_data_br(_ult_loja['data'])}<br>piso definido: {format_currency(_cob['piso'])}"
-                 if _ult_loja else "sem saldo lançado")), unsafe_allow_html=True)
-        with _c2:
-            _extra = ""
-            if _ult_trab and (_ult_trab.get("conta") or 0) > 0:
-                _extra = f"<br>inclui {format_currency(_ult_trab['conta'])} em conta"
-            st.markdown(metric_card_html(
-                "Reserva trabalhista (PagBank)", format_currency(total_do_registro(_ult_trab)),
-                (f"saldo líquido em {_fmt_data_br(_ult_trab['data'])}{_extra}" if _ult_trab else "sem saldo lançado")),
-                unsafe_allow_html=True)
-        with _c3:
-            if _cob["cobertura_pagbank"] is not None and _ult_trab:
-                st.markdown(metric_card_html(
-                    "Cobre a rescisão?", f"{_cob['cobertura_pagbank']:.0%}",
-                    f"só PagBank, contra {format_currency(_cob['passivo'])}<br>"
-                    f"com o Itaú junto: {_cob['cobertura_pagbank_mais_itau']:.0%}"), unsafe_allow_html=True)
+            alertas = gerar_alertas(meses_anual, resumos_anual, _dados_cats_anual)
+
+            if not alertas:
+                st.success("Nenhum alerta encontrado. Todos os indicadores dentro do esperado.")
             else:
-                st.markdown(metric_card_html("Cobre a rescisão?", "—", "lance o saldo do PagBank"),
-                            unsafe_allow_html=True)
+                for alerta in alertas:
+                    if alerta["tipo"] == "erro":
+                        st.error(alerta["texto"])
+                    elif alerta["tipo"] == "aviso":
+                        st.warning(alerta["texto"])
+                    else:
+                        st.success(alerta["texto"])
 
-        for _b, _dias in dias_sem_atualizar(_sr).items():
-            if _dias is None:
-                st.warning(f"{_b}: nenhum saldo lançado ainda.")
-            elif _dias > DIAS_ALERTA_DEFASAGEM:
-                st.warning(f"{_b}: último saldo tem {_dias} dias. Atualize no fechamento do mês.")
-
-        with st.form("form_saldo_reserva", clear_on_submit=False):
-            _f1, _f2 = st.columns(2)
-            with _f1:
-                _f_data = st.date_input("Data do saldo", value=pd.Timestamp.today().date(), format="DD/MM/YYYY")
-                _f_liq = st.text_input("Saldo líquido (R$)", placeholder="ex.: 10038,70")
-                _f_conta = st.text_input("Saldo em conta reservado (R$, opcional, só PagBank)", placeholder="0")
-            with _f2:
-                _f_bolsao = st.selectbox("Reserva", list(BOLSOES_SALDO))
-                _f_bruto = st.text_input("Saldo bruto (R$, opcional)", placeholder="ex.: 10061,11")
-                _f_obs = st.text_input("Observação (opcional)")
-            _f_ok = st.form_submit_button("Salvar saldo")
-        if _f_ok:
-            try:
-                if not _f_liq.strip():
-                    raise ValueError("informe o saldo líquido (use 0 se a reserva estiver zerada).")
-                _liq = parse_numero_br(_f_liq)
-                _bru = parse_numero_br(_f_bruto) if _f_bruto.strip() else None
-                _cta = parse_numero_br(_f_conta) if _f_conta.strip() else 0.0
-                if _f_bolsao != BOLSAO_TRABALHISTA and _cta:
-                    raise ValueError("Saldo em conta reservado só se aplica ao PagBank.")
-                _novo = registrar_saldo(_sr, _f_data, _f_bolsao, _liq, bruto=_bru, conta=_cta, obs=_f_obs)
-                salvar_saldos(_novo)
-                st.session_state["saldos_reservas"] = _novo
-                st.session_state.pop("conciliacao_reservas", None)
-                st.session_state["saldos_msg"] = (
-                    f"Saldo salvo: {_f_bolsao}, {_f_data.strftime('%d/%m/%Y')}, líquido {format_currency(_liq)}."
-                )
-                st.rerun()
-            except Exception as e:
-                st.error(f"Não salvei: {e}")
-        if st.session_state.get("saldos_msg"):
-            st.success(st.session_state.pop("saldos_msg"))
-
-        if _sr["entradas"]:
-            _ord = sorted(_sr["entradas"], key=lambda e: (e["data"], e["bolsao"]), reverse=True)
-            _hist = pd.DataFrame([
-                {"Data": _fmt_data_br(e["data"]), "Reserva": e["bolsao"],
-                 "Líquido": format_currency(e["liquido"]),
-                 "Bruto": format_currency(e["bruto"]) if e.get("bruto") is not None else "",
-                 "Em conta": format_currency(e["conta"]) if e.get("conta") else "",
-                 "Obs": e.get("obs", "")}
-                for e in _ord
-            ])
-            st.dataframe(_hist, use_container_width=True, hide_index=True)
-            _rm_c1, _rm_c2 = st.columns([3, 1])
-            with _rm_c1:
-                _rm_sel = st.selectbox(
-                    "Remover um lançamento de saldo",
-                    ["—"] + [f"{_fmt_data_br(e['data'])} | {e['bolsao']}" for e in _ord],
-                    key="rm_saldo_sel",
-                )
-            with _rm_c2:
-                st.write("")
-                if st.button("Remover", key="rm_saldo_btn") and _rm_sel != "—":
-                    _d_txt, _b_txt = [x.strip() for x in _rm_sel.split("|", 1)]
-                    _d_iso = pd.to_datetime(_d_txt, dayfirst=True).strftime("%Y-%m-%d")
-                    try:
-                        _novo = remover_saldo(_sr, _d_iso, _b_txt)
-                        salvar_saldos(_novo)
-                        st.session_state["saldos_reservas"] = _novo
-                        st.session_state.pop("conciliacao_reservas", None)
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Não removi: {e}")
-
-            st.markdown("**Conciliação com os fechamentos**")
+        with _t_res:
+            # --- Saldos das reservas (digitados à mão) + conciliação com os fechamentos ---
+            st.markdown('<div class="tempero-section-title">Saldos das reservas</div>', unsafe_allow_html=True)
             st.caption(
-                "Saldo anterior + o que colocou − o que tirou (pelos fechamentos) = saldo esperado. A diferença para o "
-                "saldo real é o rendimento do período (ele não aparece no extrato do CDB). Diferença negativa, ou "
-                "muito acima do rendimento esperado, indica movimento que não entrou no fechamento."
+                "O extrato da conta corrente não mostra o saldo dos CDBs, então o saldo real é lançado aqui, de preferência "
+                "no fim de cada mês. Duas reservas: Itaú (loja) e PagBank (trabalhista). Vale o saldo LÍQUIDO (o que dá "
+                "para resgatar de fato)."
             )
-            if st.button("Conciliar com os fechamentos salvos", key="conciliar_reservas"):
-                with st.spinner("Lendo os fechamentos do Drive..."):
-                    try:
-                        _reps_c, _ = carregar_relatorios_recentes()
-                        st.session_state["conciliacao_reservas"] = {
-                            b: conciliar_reservas(_sr, _reps_c, b) for b in BOLSOES_SALDO
-                        }
-                    except Exception as e:
-                        st.error(f"Erro ao conciliar: {e}")
-            _conc = st.session_state.get("conciliacao_reservas")
-            if _conc:
-                for _b, _linhas in _conc.items():
-                    if not _linhas:
-                        st.caption(f"{_b}: lance pelo menos dois saldos para conciliar.")
-                        continue
-                    _rows = []
-                    for x in _linhas:
-                        _periodo = f"{_fmt_data_br(x['de'])} → {_fmt_data_br(x['ate'])}"
-                        if x["coberto"]:
-                            _rows.append({
-                                "Período": _periodo, "Saldo inicial": format_currency(x["saldo_ini"]),
-                                "Colocou": format_currency(x["colocou"]), "Tirou": format_currency(x["tirou"]),
-                                "Esperado": format_currency(x["esperado"]),
-                                "Saldo real": format_currency(x["saldo_fim"]),
-                                "Diferença (rendimento)": format_currency(x["diferenca"]),
-                                "%": f"{x['rendimento_pct']:.2%}" if x["rendimento_pct"] is not None else "",
-                            })
-                        else:
-                            _rows.append({
-                                "Período": _periodo, "Saldo inicial": format_currency(x["saldo_ini"]),
-                                "Colocou": "", "Tirou": "", "Esperado": "",
-                                "Saldo real": format_currency(x["saldo_fim"]),
-                                "Diferença (rendimento)": "aguardando fechamento de " + ", ".join(x["faltando"]),
-                                "%": "",
-                            })
-                    st.markdown(f"*{_b}*")
-                    st.dataframe(pd.DataFrame(_rows), use_container_width=True, hide_index=True)
+            if "saldos_reservas" not in st.session_state:
+                st.session_state["saldos_reservas"] = carregar_saldos()
+            _sr = st.session_state["saldos_reservas"]
+            _cob = cobertura_reservas(_sr)
+            _ult_loja, _ult_trab = ultimo_saldo(_sr, BOLSAO_LOJA), ultimo_saldo(_sr, BOLSAO_TRABALHISTA)
 
-        with st.expander("Parâmetros (passivo trabalhista e piso da reserva da loja)"):
-            _p1, _p2 = st.columns(2)
-            with _p1:
-                _in_pass = st.text_input("Passivo trabalhista de referência (R$)",
-                                         value=f"{_cob['passivo']:.2f}".replace(".", ","), key="par_passivo")
-            with _p2:
-                _in_piso = st.text_input("Piso da reserva da loja (R$)",
-                                         value=f"{_cob['piso']:.2f}".replace(".", ","), key="par_piso")
-            if st.button("Salvar parâmetros", key="par_salvar"):
+            def _fmt_data_br(txt):
+                return pd.to_datetime(txt).strftime("%d/%m/%Y")
+
+            _c1, _c2, _c3 = st.columns(3)
+            with _c1:
+                st.markdown(metric_card_html(
+                    "Reserva da loja (Itaú)", format_currency(total_do_registro(_ult_loja)),
+                    (f"saldo líquido em {_fmt_data_br(_ult_loja['data'])}<br>piso definido: {format_currency(_cob['piso'])}"
+                     if _ult_loja else "sem saldo lançado")), unsafe_allow_html=True)
+            with _c2:
+                _extra = ""
+                if _ult_trab and (_ult_trab.get("conta") or 0) > 0:
+                    _extra = f"<br>inclui {format_currency(_ult_trab['conta'])} em conta"
+                st.markdown(metric_card_html(
+                    "Reserva trabalhista (PagBank)", format_currency(total_do_registro(_ult_trab)),
+                    (f"saldo líquido em {_fmt_data_br(_ult_trab['data'])}{_extra}" if _ult_trab else "sem saldo lançado")),
+                    unsafe_allow_html=True)
+            with _c3:
+                if _cob["cobertura_pagbank"] is not None and _ult_trab:
+                    st.markdown(metric_card_html(
+                        "Cobre a rescisão?", f"{_cob['cobertura_pagbank']:.0%}",
+                        f"só PagBank, contra {format_currency(_cob['passivo'])}<br>"
+                        f"com o Itaú junto: {_cob['cobertura_pagbank_mais_itau']:.0%}"), unsafe_allow_html=True)
+                else:
+                    st.markdown(metric_card_html("Cobre a rescisão?", "—", "lance o saldo do PagBank"),
+                                unsafe_allow_html=True)
+
+            for _b, _dias in dias_sem_atualizar(_sr).items():
+                if _dias is None:
+                    st.warning(f"{_b}: nenhum saldo lançado ainda.")
+                elif _dias > DIAS_ALERTA_DEFASAGEM:
+                    st.warning(f"{_b}: último saldo tem {_dias} dias. Atualize no fechamento do mês.")
+
+            with st.form("form_saldo_reserva", clear_on_submit=False):
+                _f1, _f2 = st.columns(2)
+                with _f1:
+                    _f_data = st.date_input("Data do saldo", value=pd.Timestamp.today().date(), format="DD/MM/YYYY")
+                    _f_liq = st.text_input("Saldo líquido (R$)", placeholder="ex.: 10038,70")
+                    _f_conta = st.text_input("Saldo em conta reservado (R$, opcional, só PagBank)", placeholder="0")
+                with _f2:
+                    _f_bolsao = st.selectbox("Reserva", list(BOLSOES_SALDO))
+                    _f_bruto = st.text_input("Saldo bruto (R$, opcional)", placeholder="ex.: 10061,11")
+                    _f_obs = st.text_input("Observação (opcional)")
+                _f_ok = st.form_submit_button("Salvar saldo")
+            if _f_ok:
                 try:
-                    _novo = dict(_sr)
-                    _novo["parametros"] = {"passivo_trabalhista": parse_numero_br(_in_pass),
-                                           "piso_loja": parse_numero_br(_in_piso)}
+                    if not _f_liq.strip():
+                        raise ValueError("informe o saldo líquido (use 0 se a reserva estiver zerada).")
+                    _liq = parse_numero_br(_f_liq)
+                    _bru = parse_numero_br(_f_bruto) if _f_bruto.strip() else None
+                    _cta = parse_numero_br(_f_conta) if _f_conta.strip() else 0.0
+                    if _f_bolsao != BOLSAO_TRABALHISTA and _cta:
+                        raise ValueError("Saldo em conta reservado só se aplica ao PagBank.")
+                    _novo = registrar_saldo(_sr, _f_data, _f_bolsao, _liq, bruto=_bru, conta=_cta, obs=_f_obs)
                     salvar_saldos(_novo)
                     st.session_state["saldos_reservas"] = _novo
+                    st.session_state.pop("conciliacao_reservas", None)
+                    st.session_state["saldos_msg"] = (
+                        f"Saldo salvo: {_f_bolsao}, {_f_data.strftime('%d/%m/%Y')}, líquido {format_currency(_liq)}."
+                    )
                     st.rerun()
                 except Exception as e:
                     st.error(f"Não salvei: {e}")
-            st.caption("O passivo vem do cálculo de junho (Verônica + Evellyn, pior caso de dezembro) e depende do FGTS "
-                       "real da Verônica, ainda a confirmar com a Rech.")
+            if st.session_state.get("saldos_msg"):
+                st.success(st.session_state.pop("saldos_msg"))
 
-        # --- Movimento das aplicações por reserva (colocou x tirou): o card acima soma tudo e esconde a troca ---
-        _res_m = {m: (resumos_anual.get(m, {}).get("reservas") or {}) for m in meses_anual}
-        if any(_res_m.values()):
-            with st.expander("Movimentação das aplicações no período (colocou × tirou)"):
-                st.caption("Só o movimento que passou pelos extratos; não é saldo.")
+            if _sr["entradas"]:
+                _ord = sorted(_sr["entradas"], key=lambda e: (e["data"], e["bolsao"]), reverse=True)
+                _hist = pd.DataFrame([
+                    {"Data": _fmt_data_br(e["data"]), "Reserva": e["bolsao"],
+                     "Líquido": format_currency(e["liquido"]),
+                     "Bruto": format_currency(e["bruto"]) if e.get("bruto") is not None else "",
+                     "Em conta": format_currency(e["conta"]) if e.get("conta") else "",
+                     "Obs": e.get("obs", "")}
+                    for e in _ord
+                ])
+                st.dataframe(_hist, use_container_width=True, hide_index=True)
+                _rm_c1, _rm_c2 = st.columns([3, 1])
+                with _rm_c1:
+                    _rm_sel = st.selectbox(
+                        "Remover um lançamento de saldo",
+                        ["—"] + [f"{_fmt_data_br(e['data'])} | {e['bolsao']}" for e in _ord],
+                        key="rm_saldo_sel",
+                    )
+                with _rm_c2:
+                    st.write("")
+                    if st.button("Remover", key="rm_saldo_btn") and _rm_sel != "—":
+                        _d_txt, _b_txt = [x.strip() for x in _rm_sel.split("|", 1)]
+                        _d_iso = pd.to_datetime(_d_txt, dayfirst=True).strftime("%Y-%m-%d")
+                        try:
+                            _novo = remover_saldo(_sr, _d_iso, _b_txt)
+                            salvar_saldos(_novo)
+                            st.session_state["saldos_reservas"] = _novo
+                            st.session_state.pop("conciliacao_reservas", None)
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Não removi: {e}")
 
-                def _soma_bolsao(b, campo):
-                    return sum(_res_m[m].get(b, {}).get(campo, 0.0) for m in meses_anual)
-
-                _linhas_res = []
-                for _b in BOLSOES:
-                    _ap, _rg = _soma_bolsao(_b, "aplicado"), _soma_bolsao(_b, "resgatado")
-                    _rd = _soma_bolsao(_b, "rendimentos")
-                    if abs(_ap) + abs(_rg) + abs(_rd) < 0.005:
-                        continue
-                    _linhas_res.append({
-                        "Reserva": _b, "Colocou": _ap, "Tirou": _rg,
-                        "Diferença (colocou − tirou)": _ap - _rg, "Rendimentos no extrato": _rd,
-                    })
-                if _linhas_res:
-                    _df_res = pd.DataFrame(_linhas_res)
-                    _tot = {"Reserva": "Total"}
-                    for _c in _df_res.columns[1:]:
-                        _tot[_c] = float(_df_res[_c].sum())
-                    _df_res = pd.concat([_df_res, pd.DataFrame([_tot])], ignore_index=True)
-                    _df_show = _df_res.copy()
-                    for _c in _df_show.columns[1:]:
-                        _df_show[_c] = _df_show[_c].apply(format_currency)
-                    st.dataframe(_df_show, use_container_width=True, hide_index=True)
-
-                    _mes_rows = []
-                    for _b in BOLSOES:
-                        if not any(abs(_res_m[m].get(_b, {}).get("guardado", 0.0)) >= 0.005 for m in meses_anual):
-                            continue
-                        _linha = {"Reserva": _b}
-                        for m in meses_anual:
-                            _linha[m] = format_currency(_res_m[m].get(_b, {}).get("guardado", 0.0))
-                        _mes_rows.append(_linha)
-                    if _mes_rows:
-                        st.caption("Mês a mês — positivo: colocou mais do que tirou; negativo: tirou mais do que colocou.")
-                        st.dataframe(pd.DataFrame(_mes_rows), use_container_width=True, hide_index=True)
-
-                    _guardado_total = float(_df_res.iloc[-1]["Diferença (colocou − tirou)"])
-                    _rend_total = float(_df_res.iloc[-1]["Rendimentos no extrato"])
-                    if abs((_guardado_total - _rend_total) - aplicado_liquido) > 0.011:
-                        st.warning(
-                            "O total por reserva não bate com o card acima: algum mês salvo não tem a aba Movimentos "
-                            "(só dá para abrir por conta os meses que têm)."
-                        )
+                st.markdown("**Conciliação com os fechamentos**")
                 st.caption(
-                    "Dinheiro que muda de reserva (ex.: PagBank → CDB do Itaú) aparece como \"tirou\" em uma e "
-                    "\"colocou\" na outra: reduz uma e aumenta a outra, sem mudar o total. Ajustes lançados no caixa "
-                    "que citam o PagBank contam como reserva trabalhista."
+                    "Saldo anterior + o que colocou − o que tirou (pelos fechamentos) = saldo esperado. A diferença para o "
+                    "saldo real é o rendimento do período (ele não aparece no extrato do CDB). Diferença negativa, ou "
+                    "muito acima do rendimento esperado, indica movimento que não entrou no fechamento."
+                )
+                if st.button("Conciliar com os fechamentos salvos", key="conciliar_reservas"):
+                    with st.spinner("Lendo os fechamentos do Drive..."):
+                        try:
+                            _reps_c, _ = carregar_relatorios_recentes()
+                            st.session_state["conciliacao_reservas"] = {
+                                b: conciliar_reservas(_sr, _reps_c, b) for b in BOLSOES_SALDO
+                            }
+                        except Exception as e:
+                            st.error(f"Erro ao conciliar: {e}")
+                _conc = st.session_state.get("conciliacao_reservas")
+                if _conc:
+                    for _b, _linhas in _conc.items():
+                        if not _linhas:
+                            st.caption(f"{_b}: lance pelo menos dois saldos para conciliar.")
+                            continue
+                        _rows = []
+                        for x in _linhas:
+                            _periodo = f"{_fmt_data_br(x['de'])} → {_fmt_data_br(x['ate'])}"
+                            if x["coberto"]:
+                                _rows.append({
+                                    "Período": _periodo, "Saldo inicial": format_currency(x["saldo_ini"]),
+                                    "Colocou": format_currency(x["colocou"]), "Tirou": format_currency(x["tirou"]),
+                                    "Esperado": format_currency(x["esperado"]),
+                                    "Saldo real": format_currency(x["saldo_fim"]),
+                                    "Diferença (rendimento)": format_currency(x["diferenca"]),
+                                    "%": f"{x['rendimento_pct']:.2%}" if x["rendimento_pct"] is not None else "",
+                                })
+                            else:
+                                _rows.append({
+                                    "Período": _periodo, "Saldo inicial": format_currency(x["saldo_ini"]),
+                                    "Colocou": "", "Tirou": "", "Esperado": "",
+                                    "Saldo real": format_currency(x["saldo_fim"]),
+                                    "Diferença (rendimento)": "aguardando fechamento de " + ", ".join(x["faltando"]),
+                                    "%": "",
+                                })
+                        st.markdown(f"*{_b}*")
+                        st.dataframe(pd.DataFrame(_rows), use_container_width=True, hide_index=True)
+
+            with st.expander("Parâmetros (passivo trabalhista e piso da reserva da loja)"):
+                _p1, _p2 = st.columns(2)
+                with _p1:
+                    _in_pass = st.text_input("Passivo trabalhista de referência (R$)",
+                                             value=f"{_cob['passivo']:.2f}".replace(".", ","), key="par_passivo")
+                with _p2:
+                    _in_piso = st.text_input("Piso da reserva da loja (R$)",
+                                             value=f"{_cob['piso']:.2f}".replace(".", ","), key="par_piso")
+                if st.button("Salvar parâmetros", key="par_salvar"):
+                    try:
+                        _novo = dict(_sr)
+                        _novo["parametros"] = {"passivo_trabalhista": parse_numero_br(_in_pass),
+                                               "piso_loja": parse_numero_br(_in_piso)}
+                        salvar_saldos(_novo)
+                        st.session_state["saldos_reservas"] = _novo
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Não salvei: {e}")
+                st.caption("O passivo vem do cálculo de junho (Verônica + Evellyn, pior caso de dezembro) e depende do FGTS "
+                           "real da Verônica, ainda a confirmar com a Rech.")
+
+            # --- Movimento das aplicações por reserva (colocou x tirou): o card acima soma tudo e esconde a troca ---
+            _res_m = {m: (resumos_anual.get(m, {}).get("reservas") or {}) for m in meses_anual}
+            if any(_res_m.values()):
+                with st.expander("Movimentação das aplicações no período (colocou × tirou)"):
+                    st.caption("Só o movimento que passou pelos extratos; não é saldo.")
+
+                    def _soma_bolsao(b, campo):
+                        return sum(_res_m[m].get(b, {}).get(campo, 0.0) for m in meses_anual)
+
+                    _linhas_res = []
+                    for _b in BOLSOES:
+                        _ap, _rg = _soma_bolsao(_b, "aplicado"), _soma_bolsao(_b, "resgatado")
+                        _rd = _soma_bolsao(_b, "rendimentos")
+                        if abs(_ap) + abs(_rg) + abs(_rd) < 0.005:
+                            continue
+                        _linhas_res.append({
+                            "Reserva": _b, "Colocou": _ap, "Tirou": _rg,
+                            "Diferença (colocou − tirou)": _ap - _rg, "Rendimentos no extrato": _rd,
+                        })
+                    if _linhas_res:
+                        _df_res = pd.DataFrame(_linhas_res)
+                        _tot = {"Reserva": "Total"}
+                        for _c in _df_res.columns[1:]:
+                            _tot[_c] = float(_df_res[_c].sum())
+                        _df_res = pd.concat([_df_res, pd.DataFrame([_tot])], ignore_index=True)
+                        _df_show = _df_res.copy()
+                        for _c in _df_show.columns[1:]:
+                            _df_show[_c] = _df_show[_c].apply(format_currency)
+                        st.dataframe(_df_show, use_container_width=True, hide_index=True)
+
+                        _mes_rows = []
+                        for _b in BOLSOES:
+                            if not any(abs(_res_m[m].get(_b, {}).get("guardado", 0.0)) >= 0.005 for m in meses_anual):
+                                continue
+                            _linha = {"Reserva": _b}
+                            for m in meses_anual:
+                                _linha[m] = format_currency(_res_m[m].get(_b, {}).get("guardado", 0.0))
+                            _mes_rows.append(_linha)
+                        if _mes_rows:
+                            st.caption("Mês a mês — positivo: colocou mais do que tirou; negativo: tirou mais do que colocou.")
+                            st.dataframe(pd.DataFrame(_mes_rows), use_container_width=True, hide_index=True)
+
+                        _guardado_total = float(_df_res.iloc[-1]["Diferença (colocou − tirou)"])
+                        _rend_total = float(_df_res.iloc[-1]["Rendimentos no extrato"])
+                        if abs((_guardado_total - _rend_total) - aplicado_liquido) > 0.011:
+                            st.warning(
+                                "O total por reserva não bate com o card acima: algum mês salvo não tem a aba Movimentos "
+                                "(só dá para abrir por conta os meses que têm)."
+                            )
+                    st.caption(
+                        "Dinheiro que muda de reserva (ex.: PagBank → CDB do Itaú) aparece como \"tirou\" em uma e "
+                        "\"colocou\" na outra: reduz uma e aumenta a outra, sem mudar o total. Ajustes lançados no caixa "
+                        "que citam o PagBank contam como reserva trabalhista."
+                    )
+
+        with _t_dre:
+            # --- DRE mensal ---
+            st.markdown('<div class="tempero-section-title">DRE mensal por categoria</div>', unsafe_allow_html=True)
+
+            df_dre = pd.DataFrame(linhas_dre)
+            # Linhas gerenciais no fim da tabela (o __ Resultado __ já existente é a variação de caixa)
+            _extra = [
+                {"Categoria": "__ Resultado operacional __", **{m: _pontes_anual[m]["operacional"] for m in meses_anual}},
+                {"Categoria": "__ Retiradas dos sócios __", **{m: _pontes_anual[m]["retiradas"] for m in meses_anual}},
+                {"Categoria": "__ Resultado após retiradas __", **{m: _pontes_anual[m]["apos_retiradas"] for m in meses_anual}},
+            ]
+            df_dre = pd.concat([df_dre, pd.DataFrame(_extra)], ignore_index=True)
+            df_dre_display = df_dre.copy()
+            for mes in meses_anual:
+                df_dre_display[mes] = df_dre_display[mes].apply(
+                    lambda x: format_currency(x) if isinstance(x, (int, float)) and x != 0.0 else "—"
                 )
 
-        st.markdown("---")
-
-        # --- DRE mensal ---
-        st.markdown('<div class="tempero-section-title">DRE mensal por categoria</div>', unsafe_allow_html=True)
-
-        df_dre = pd.DataFrame(linhas_dre)
-        # Linhas gerenciais no fim da tabela (o __ Resultado __ já existente é a variação de caixa)
-        _extra = [
-            {"Categoria": "__ Resultado operacional __", **{m: _pontes_anual[m]["operacional"] for m in meses_anual}},
-            {"Categoria": "__ Retiradas dos sócios __", **{m: _pontes_anual[m]["retiradas"] for m in meses_anual}},
-            {"Categoria": "__ Resultado após retiradas __", **{m: _pontes_anual[m]["apos_retiradas"] for m in meses_anual}},
-        ]
-        df_dre = pd.concat([df_dre, pd.DataFrame(_extra)], ignore_index=True)
-        df_dre_display = df_dre.copy()
-        for mes in meses_anual:
-            df_dre_display[mes] = df_dre_display[mes].apply(
-                lambda x: format_currency(x) if isinstance(x, (int, float)) and x != 0.0 else "—"
+            st.dataframe(
+                df_dre_display.set_index("Categoria"),
+                use_container_width=True,
             )
 
-        st.dataframe(
-            df_dre_display.set_index("Categoria"),
-            use_container_width=True,
-        )
+            # --- Receita por canal, mês a mês ---
+            _canais_mes = {m: (resumos_anual.get(m, {}).get("canais") or {}) for m in meses_anual}
+            if any(_canais_mes.values()):
+                st.markdown('<div class="tempero-section-title">Receita por canal</div>', unsafe_allow_html=True)
+                _linhas_canal = []
+                for _c in [c for c in CANAIS_ORDEM if any(c in _canais_mes[m] for m in meses_anual)]:
+                    _lin = {"Canal": _c}
+                    for _m in meses_anual:
+                        _tot = sum(_canais_mes[_m].values())
+                        _v = _canais_mes[_m].get(_c, 0.0)
+                        _lin[_m] = "—" if not _v or not _tot else f"{format_currency(_v)} ({_v / _tot * 100:.0f}%)"
+                    _linhas_canal.append(_lin)
+                st.dataframe(pd.DataFrame(_linhas_canal).set_index("Canal"), use_container_width=True)
+                st.caption("Canal identificado pelo texto do lançamento. Meses salvos sem a aba Movimentos ficam em branco.")
 
-        # --- Receita por canal, mês a mês ---
-        _canais_mes = {m: (resumos_anual.get(m, {}).get("canais") or {}) for m in meses_anual}
-        if any(_canais_mes.values()):
-            st.markdown('<div class="tempero-section-title">Receita por canal</div>', unsafe_allow_html=True)
-            _linhas_canal = []
-            for _c in [c for c in CANAIS_ORDEM if any(c in _canais_mes[m] for m in meses_anual)]:
-                _lin = {"Canal": _c}
-                for _m in meses_anual:
-                    _tot = sum(_canais_mes[_m].values())
-                    _v = _canais_mes[_m].get(_c, 0.0)
-                    _lin[_m] = "—" if not _v or not _tot else f"{format_currency(_v)} ({_v / _tot * 100:.0f}%)"
-                _linhas_canal.append(_lin)
-            st.dataframe(pd.DataFrame(_linhas_canal).set_index("Canal"), use_container_width=True)
-            st.caption("Canal identificado pelo texto do lançamento. Meses salvos sem a aba Movimentos ficam em branco.")
+        with _t_cmv:
+            # --- Barra de CMV ---
+            st.markdown('<div class="tempero-section-title">CMV — custo de insumos sobre receita</div>', unsafe_allow_html=True)
 
-        st.markdown("---")
-
-        # --- Barra de CMV ---
-        st.markdown('<div class="tempero-section-title">CMV — custo de insumos sobre receita</div>', unsafe_allow_html=True)
-
-        cmv_por_mes, cmv_mm_por_mes = cmv_mensal_e_media_movel(meses_anual, _dados_cats_anual)
-        for mes in meses_anual:
-            cmv = cmv_por_mes.get(mes)
-            if cmv is None:
-                continue
-            perc = cmv * 100
-            mm = cmv_mm_por_mes.get(mes)
-            perc_mm = (mm if mm is not None else cmv) * 100
-            # a cor segue a média móvel de 3 meses (o mês isolado oscila com o calendário de boletos)
-            if perc_mm > 32:
-                label_cor = "🔴"
-            elif perc_mm > 28:
-                label_cor = "🟡"
-            else:
-                label_cor = "🟢"
-
-            st.markdown(
-                f"**{mes}** {label_cor} &nbsp; mês `{perc:.1f}%` &nbsp;·&nbsp; média 3 meses `{perc_mm:.1f}%`",
-                unsafe_allow_html=True,
-            )
-            st.progress(min(perc / 50, 1.0))  # escala: 50% = barra cheia
-
-        st.caption(
-            "CMV = (Fornecedores e Insumos + Embalagens) ÷ Receita. "
-            "Referência para marmitarias: 28–32%. A receita é líquida de comissão do iFood e taxa de cartão."
-        )
-
-        st.markdown("---")
-
-        # --- Alertas automáticos ---
-        st.markdown('<div class="tempero-section-title">Alertas do período</div>', unsafe_allow_html=True)
-
-        alertas = gerar_alertas(meses_anual, resumos_anual, _dados_cats_anual)
-
-        if not alertas:
-            st.success("Nenhum alerta encontrado. Todos os indicadores dentro do esperado.")
-        else:
-            for alerta in alertas:
-                if alerta["tipo"] == "erro":
-                    st.error(alerta["texto"])
-                elif alerta["tipo"] == "aviso":
-                    st.warning(alerta["texto"])
-                else:
-                    st.success(alerta["texto"])
-
-        st.markdown("---")
-
-        # --- Conferência geral dos fechamentos salvos ---
-        st.markdown('<div class="tempero-section-title">🔎 Conferência geral</div>', unsafe_allow_html=True)
-        st.caption(
-            "Varre a versão mais recente de cada mês salvo e aponta o que merece revisão: saldo inicial contado "
-            "como receita, A Classificar, mesmo favorecido em categorias diferentes, totais que não fecham, "
-            "lançamentos duplicados e lançamentos manuais no caixa. Só leitura: nada é alterado."
-        )
-        if st.button("Rodar conferência geral", key="conf_geral_rodar"):
-            with st.spinner("Lendo os fechamentos do Drive..."):
-                try:
-                    _reps_conf, _avisos_conf = carregar_relatorios_recentes()
-                    st.session_state["conf_geral"] = {
-                        "achados": conferir(_reps_conf),
-                        "meses": sorted(_reps_conf),
-                        "avisos": _avisos_conf,
-                    }
-                except Exception as e:
-                    st.session_state.pop("conf_geral", None)
-                    st.error(f"Erro ao rodar a conferência: {e}")
-
-        _conf = st.session_state.get("conf_geral")
-        if _conf:
-            st.caption(f"Meses conferidos: {', '.join(_conf['meses']) or 'nenhum'}.")
-            for _a in _conf["avisos"]:
-                st.warning(_a)
-            _achados = _conf["achados"]
-            st.dataframe(resumo_por_tipo(_achados), use_container_width=True, hide_index=True)
-            if not _achados:
-                st.success("Nenhum achado: os fechamentos salvos passaram em todas as verificações.")
-            for _tipo, _rotulo in _TIPOS_CONF.items():
-                _itens = [a for a in _achados if a["tipo"] == _tipo]
-                if not _itens:
+            cmv_por_mes, cmv_mm_por_mes = cmv_mensal_e_media_movel(meses_anual, _dados_cats_anual)
+            for mes in meses_anual:
+                cmv = cmv_por_mes.get(mes)
+                if cmv is None:
                     continue
-                with st.expander(f"{_rotulo} ({len(_itens)})", expanded=any(a["gravidade"] == "erro" for a in _itens)):
-                    for _a in _itens:
-                        _msg = f"**{_a['mes']}** — {_a['texto']}"
-                        (st.error if _a["gravidade"] == "erro" else st.warning)(_msg)
+                perc = cmv * 100
+                mm = cmv_mm_por_mes.get(mes)
+                perc_mm = (mm if mm is not None else cmv) * 100
+                # a cor segue a média móvel de 3 meses (o mês isolado oscila com o calendário de boletos)
+                if perc_mm > 32:
+                    label_cor = "🔴"
+                elif perc_mm > 28:
+                    label_cor = "🟡"
+                else:
+                    label_cor = "🟢"
+
+                st.markdown(
+                    f"**{mes}** {label_cor} &nbsp; mês `{perc:.1f}%` &nbsp;·&nbsp; média 3 meses `{perc_mm:.1f}%`",
+                    unsafe_allow_html=True,
+                )
+                st.progress(min(perc / 50, 1.0))  # escala: 50% = barra cheia
+
             st.caption(
-                "Para corrigir: Conferência & Categorias → Fonte: Histórico (Drive) → editar categorias / "
-                "excluir lançamentos (gera uma nova versão do mês)."
+                "CMV = (Fornecedores e Insumos + Embalagens) ÷ Receita. "
+                "Referência para marmitarias: 28–32%. A receita é líquida de comissão do iFood e taxa de cartão."
             )
+
+        with _t_conf:
+            # --- Conferência geral dos fechamentos salvos ---
+            st.markdown('<div class="tempero-section-title">🔎 Conferência geral</div>', unsafe_allow_html=True)
+            st.caption(
+                "Varre a versão mais recente de cada mês salvo e aponta o que merece revisão: saldo inicial contado "
+                "como receita, A Classificar, mesmo favorecido em categorias diferentes, totais que não fecham, "
+                "lançamentos duplicados e lançamentos manuais no caixa. Só leitura: nada é alterado."
+            )
+            if st.button("Rodar conferência geral", key="conf_geral_rodar"):
+                with st.spinner("Lendo os fechamentos do Drive..."):
+                    try:
+                        _reps_conf, _avisos_conf = carregar_relatorios_recentes()
+                        st.session_state["conf_geral"] = {
+                            "achados": conferir(_reps_conf),
+                            "meses": sorted(_reps_conf),
+                            "avisos": _avisos_conf,
+                        }
+                    except Exception as e:
+                        st.session_state.pop("conf_geral", None)
+                        st.error(f"Erro ao rodar a conferência: {e}")
+
+            _conf = st.session_state.get("conf_geral")
+            if _conf:
+                st.caption(f"Meses conferidos: {', '.join(_conf['meses']) or 'nenhum'}.")
+                for _a in _conf["avisos"]:
+                    st.warning(_a)
+                _achados = _conf["achados"]
+                st.dataframe(resumo_por_tipo(_achados), use_container_width=True, hide_index=True)
+                if not _achados:
+                    st.success("Nenhum achado: os fechamentos salvos passaram em todas as verificações.")
+                for _tipo, _rotulo in _TIPOS_CONF.items():
+                    _itens = [a for a in _achados if a["tipo"] == _tipo]
+                    if not _itens:
+                        continue
+                    with st.expander(f"{_rotulo} ({len(_itens)})", expanded=any(a["gravidade"] == "erro" for a in _itens)):
+                        for _a in _itens:
+                            _msg = f"**{_a['mes']}** — {_a['texto']}"
+                            (st.error if _a["gravidade"] == "erro" else st.warning)(_msg)
+                st.caption(
+                    "Para corrigir: Conferência & Categorias → Fonte: Histórico (Drive) → editar categorias / "
+                    "excluir lançamentos (gera uma nova versão do mês)."
+                )
