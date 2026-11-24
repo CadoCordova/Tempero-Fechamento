@@ -43,8 +43,22 @@ def inject_css():
             padding: 0.9rem 1.1rem;
             border-radius: 0.8rem;
             box-shadow: 0 2px 8px rgba(0,0,0,0.18);
-            min-height: 7.6rem;
+            min-height: 8.6rem;
             box-sizing: border-box;
+        }}
+        /* colunas com cards: estica tudo para a mesma altura */
+        div[data-testid="stHorizontalBlock"]:has(.tempero-metric-card) {{
+            align-items: stretch;
+        }}
+        div[data-testid="stColumn"]:has(.tempero-metric-card) > div,
+        div[data-testid="stColumn"]:has(.tempero-metric-card) [data-testid="stVerticalBlock"],
+        div[data-testid="stColumn"]:has(.tempero-metric-card) [data-testid="stElementContainer"],
+        div[data-testid="stColumn"]:has(.tempero-metric-card) [data-testid="stMarkdown"],
+        div[data-testid="stColumn"]:has(.tempero-metric-card) [data-testid="stMarkdownContainer"] {{
+            height: 100%;
+        }}
+        div[data-testid="stColumn"]:has(.tempero-metric-card) .tempero-metric-card {{
+            height: 100%;
         }}
         .tempero-metric-label {{
             font-size: 0.85rem;
