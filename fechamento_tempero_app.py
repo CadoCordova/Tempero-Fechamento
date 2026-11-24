@@ -44,10 +44,17 @@ from modules.ui import inject_css, metric_card_html
 from modules.utils import format_currency, get_ano_mes, normalizar_texto, parse_numero_br, slugify
 from modules.validacao import exibir_painel_validacao, validar_consistencia_fechamento
 from modules.controle_anual import carregar_dre_anual, gerar_alertas, selecionar_versoes_recentes
+from modules.reservas import (
+    BOLSOES_SALDO, DIAS_ALERTA_DEFASAGEM, carregar_saldos, cobertura as cobertura_reservas,
+    conciliar as conciliar_reservas, dias_sem_atualizar, registrar_saldo, remover_saldo,
+    salvar_saldos, total_do_registro, ultimo_saldo,
+)
 from modules.conferencia import TIPOS as _TIPOS_CONF, carregar_relatorios_recentes, conferir, resumo_por_tipo
 from modules.historico_edicao import aplicar_ajustes_e_gerar_excel
 from modules.canais import CANAIS_ORDEM, receita_por_canal_dict, tabela_canais
 from modules.gerencial import (
+    BOLSAO_LOJA,
+    BOLSAO_TRABALHISTA,
     BOLSOES,
     ponte_por_categoria,
     ponte_por_movimentos,
@@ -1379,60 +1386,236 @@ with tab5:
         _frase += f" Variação final do caixa no período: {format_currency(resultado_caixa_total)}."
         st.info(_frase.replace("$", "\\$"))
 
-        # --- Reservas por bolsão (loja x trabalhista): o card acima soma tudo e esconde a troca entre elas ---
+        # --- Saldos das reservas (digitados à mão) + conciliação com os fechamentos ---
+        st.markdown('<div class="tempero-section-title">Saldos das reservas</div>', unsafe_allow_html=True)
+        st.caption(
+            "O extrato da conta corrente não mostra o saldo dos CDBs, então o saldo real é lançado aqui, de preferência "
+            "no fim de cada mês. Duas reservas: Itaú (loja) e PagBank (trabalhista). Vale o saldo LÍQUIDO (o que dá "
+            "para resgatar de fato)."
+        )
+        if "saldos_reservas" not in st.session_state:
+            st.session_state["saldos_reservas"] = carregar_saldos()
+        _sr = st.session_state["saldos_reservas"]
+        _cob = cobertura_reservas(_sr)
+        _ult_loja, _ult_trab = ultimo_saldo(_sr, BOLSAO_LOJA), ultimo_saldo(_sr, BOLSAO_TRABALHISTA)
+
+        def _fmt_data_br(txt):
+            return pd.to_datetime(txt).strftime("%d/%m/%Y")
+
+        _c1, _c2, _c3 = st.columns(3)
+        with _c1:
+            st.markdown(metric_card_html(
+                "Reserva da loja (Itaú)", format_currency(total_do_registro(_ult_loja)),
+                (f"saldo líquido em {_fmt_data_br(_ult_loja['data'])}<br>piso definido: {format_currency(_cob['piso'])}"
+                 if _ult_loja else "sem saldo lançado")), unsafe_allow_html=True)
+        with _c2:
+            _extra = ""
+            if _ult_trab and (_ult_trab.get("conta") or 0) > 0:
+                _extra = f"<br>inclui {format_currency(_ult_trab['conta'])} em conta"
+            st.markdown(metric_card_html(
+                "Reserva trabalhista (PagBank)", format_currency(total_do_registro(_ult_trab)),
+                (f"saldo líquido em {_fmt_data_br(_ult_trab['data'])}{_extra}" if _ult_trab else "sem saldo lançado")),
+                unsafe_allow_html=True)
+        with _c3:
+            if _cob["cobertura_pagbank"] is not None and _ult_trab:
+                st.markdown(metric_card_html(
+                    "Cobre a rescisão?", f"{_cob['cobertura_pagbank']:.0%}",
+                    f"só PagBank, contra {format_currency(_cob['passivo'])}<br>"
+                    f"com o Itaú junto: {_cob['cobertura_pagbank_mais_itau']:.0%}"), unsafe_allow_html=True)
+            else:
+                st.markdown(metric_card_html("Cobre a rescisão?", "—", "lance o saldo do PagBank"),
+                            unsafe_allow_html=True)
+
+        for _b, _dias in dias_sem_atualizar(_sr).items():
+            if _dias is None:
+                st.warning(f"{_b}: nenhum saldo lançado ainda.")
+            elif _dias > DIAS_ALERTA_DEFASAGEM:
+                st.warning(f"{_b}: último saldo tem {_dias} dias. Atualize no fechamento do mês.")
+
+        with st.form("form_saldo_reserva", clear_on_submit=False):
+            _f1, _f2 = st.columns(2)
+            with _f1:
+                _f_data = st.date_input("Data do saldo", value=pd.Timestamp.today().date(), format="DD/MM/YYYY")
+                _f_liq = st.text_input("Saldo líquido (R$)", placeholder="ex.: 10038,70")
+                _f_conta = st.text_input("Saldo em conta reservado (R$, opcional, só PagBank)", placeholder="0")
+            with _f2:
+                _f_bolsao = st.selectbox("Reserva", list(BOLSOES_SALDO))
+                _f_bruto = st.text_input("Saldo bruto (R$, opcional)", placeholder="ex.: 10061,11")
+                _f_obs = st.text_input("Observação (opcional)")
+            _f_ok = st.form_submit_button("Salvar saldo")
+        if _f_ok:
+            try:
+                if not _f_liq.strip():
+                    raise ValueError("informe o saldo líquido (use 0 se a reserva estiver zerada).")
+                _liq = parse_numero_br(_f_liq)
+                _bru = parse_numero_br(_f_bruto) if _f_bruto.strip() else None
+                _cta = parse_numero_br(_f_conta) if _f_conta.strip() else 0.0
+                if _f_bolsao != BOLSAO_TRABALHISTA and _cta:
+                    raise ValueError("Saldo em conta reservado só se aplica ao PagBank.")
+                _novo = registrar_saldo(_sr, _f_data, _f_bolsao, _liq, bruto=_bru, conta=_cta, obs=_f_obs)
+                salvar_saldos(_novo)
+                st.session_state["saldos_reservas"] = _novo
+                st.session_state.pop("conciliacao_reservas", None)
+                st.session_state["saldos_msg"] = (
+                    f"Saldo salvo: {_f_bolsao}, {_f_data.strftime('%d/%m/%Y')}, líquido {format_currency(_liq)}."
+                )
+                st.rerun()
+            except Exception as e:
+                st.error(f"Não salvei: {e}")
+        if st.session_state.get("saldos_msg"):
+            st.success(st.session_state.pop("saldos_msg"))
+
+        if _sr["entradas"]:
+            _ord = sorted(_sr["entradas"], key=lambda e: (e["data"], e["bolsao"]), reverse=True)
+            _hist = pd.DataFrame([
+                {"Data": _fmt_data_br(e["data"]), "Reserva": e["bolsao"],
+                 "Líquido": format_currency(e["liquido"]),
+                 "Bruto": format_currency(e["bruto"]) if e.get("bruto") is not None else "",
+                 "Em conta": format_currency(e["conta"]) if e.get("conta") else "",
+                 "Obs": e.get("obs", "")}
+                for e in _ord
+            ])
+            st.dataframe(_hist, use_container_width=True, hide_index=True)
+            _rm_c1, _rm_c2 = st.columns([3, 1])
+            with _rm_c1:
+                _rm_sel = st.selectbox(
+                    "Remover um lançamento de saldo",
+                    ["—"] + [f"{_fmt_data_br(e['data'])} | {e['bolsao']}" for e in _ord],
+                    key="rm_saldo_sel",
+                )
+            with _rm_c2:
+                st.write("")
+                if st.button("Remover", key="rm_saldo_btn") and _rm_sel != "—":
+                    _d_txt, _b_txt = [x.strip() for x in _rm_sel.split("|", 1)]
+                    _d_iso = pd.to_datetime(_d_txt, dayfirst=True).strftime("%Y-%m-%d")
+                    try:
+                        _novo = remover_saldo(_sr, _d_iso, _b_txt)
+                        salvar_saldos(_novo)
+                        st.session_state["saldos_reservas"] = _novo
+                        st.session_state.pop("conciliacao_reservas", None)
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Não removi: {e}")
+
+            st.markdown("**Conciliação com os fechamentos**")
+            st.caption(
+                "Saldo anterior + o que colocou − o que tirou (pelos fechamentos) = saldo esperado. A diferença para o "
+                "saldo real é o rendimento do período (ele não aparece no extrato do CDB). Diferença negativa, ou "
+                "muito acima do rendimento esperado, indica movimento que não entrou no fechamento."
+            )
+            if st.button("Conciliar com os fechamentos salvos", key="conciliar_reservas"):
+                with st.spinner("Lendo os fechamentos do Drive..."):
+                    try:
+                        _reps_c, _ = carregar_relatorios_recentes()
+                        st.session_state["conciliacao_reservas"] = {
+                            b: conciliar_reservas(_sr, _reps_c, b) for b in BOLSOES_SALDO
+                        }
+                    except Exception as e:
+                        st.error(f"Erro ao conciliar: {e}")
+            _conc = st.session_state.get("conciliacao_reservas")
+            if _conc:
+                for _b, _linhas in _conc.items():
+                    if not _linhas:
+                        st.caption(f"{_b}: lance pelo menos dois saldos para conciliar.")
+                        continue
+                    _rows = []
+                    for x in _linhas:
+                        _periodo = f"{_fmt_data_br(x['de'])} → {_fmt_data_br(x['ate'])}"
+                        if x["coberto"]:
+                            _rows.append({
+                                "Período": _periodo, "Saldo inicial": format_currency(x["saldo_ini"]),
+                                "Colocou": format_currency(x["colocou"]), "Tirou": format_currency(x["tirou"]),
+                                "Esperado": format_currency(x["esperado"]),
+                                "Saldo real": format_currency(x["saldo_fim"]),
+                                "Diferença (rendimento)": format_currency(x["diferenca"]),
+                                "%": f"{x['rendimento_pct']:.2%}" if x["rendimento_pct"] is not None else "",
+                            })
+                        else:
+                            _rows.append({
+                                "Período": _periodo, "Saldo inicial": format_currency(x["saldo_ini"]),
+                                "Colocou": "", "Tirou": "", "Esperado": "",
+                                "Saldo real": format_currency(x["saldo_fim"]),
+                                "Diferença (rendimento)": "aguardando fechamento de " + ", ".join(x["faltando"]),
+                                "%": "",
+                            })
+                    st.markdown(f"*{_b}*")
+                    st.dataframe(pd.DataFrame(_rows), use_container_width=True, hide_index=True)
+
+        with st.expander("Parâmetros (passivo trabalhista e piso da reserva da loja)"):
+            _p1, _p2 = st.columns(2)
+            with _p1:
+                _in_pass = st.text_input("Passivo trabalhista de referência (R$)",
+                                         value=f"{_cob['passivo']:.2f}".replace(".", ","), key="par_passivo")
+            with _p2:
+                _in_piso = st.text_input("Piso da reserva da loja (R$)",
+                                         value=f"{_cob['piso']:.2f}".replace(".", ","), key="par_piso")
+            if st.button("Salvar parâmetros", key="par_salvar"):
+                try:
+                    _novo = dict(_sr)
+                    _novo["parametros"] = {"passivo_trabalhista": parse_numero_br(_in_pass),
+                                           "piso_loja": parse_numero_br(_in_piso)}
+                    salvar_saldos(_novo)
+                    st.session_state["saldos_reservas"] = _novo
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Não salvei: {e}")
+            st.caption("O passivo vem do cálculo de junho (Verônica + Evellyn, pior caso de dezembro) e depende do FGTS "
+                       "real da Verônica, ainda a confirmar com a Rech.")
+
+        # --- Movimento das aplicações por reserva (colocou x tirou): o card acima soma tudo e esconde a troca ---
         _res_m = {m: (resumos_anual.get(m, {}).get("reservas") or {}) for m in meses_anual}
         if any(_res_m.values()):
-            st.markdown('<div class="tempero-section-title">Reservas por bolsão</div>', unsafe_allow_html=True)
+            with st.expander("Movimentação das aplicações no período (colocou × tirou)"):
+                st.caption("Só o movimento que passou pelos extratos; não é saldo.")
 
-            def _soma_bolsao(b, campo):
-                return sum(_res_m[m].get(b, {}).get(campo, 0.0) for m in meses_anual)
+                def _soma_bolsao(b, campo):
+                    return sum(_res_m[m].get(b, {}).get(campo, 0.0) for m in meses_anual)
 
-            _linhas_res = []
-            for _b in BOLSOES:
-                _ap, _rg = _soma_bolsao(_b, "aplicado"), _soma_bolsao(_b, "resgatado")
-                _rd = _soma_bolsao(_b, "rendimentos")
-                if abs(_ap) + abs(_rg) + abs(_rd) < 0.005:
-                    continue
-                _linhas_res.append({
-                    "Bolsão": _b, "Aplicado": _ap, "Resgatado": _rg,
-                    "Guardado (aplicado − resgatado)": _ap - _rg, "Rendimentos": _rd,
-                })
-            if _linhas_res:
-                _df_res = pd.DataFrame(_linhas_res)
-                _tot = {"Bolsão": "Total"}
-                for _c in _df_res.columns[1:]:
-                    _tot[_c] = float(_df_res[_c].sum())
-                _df_res = pd.concat([_df_res, pd.DataFrame([_tot])], ignore_index=True)
-                _df_show = _df_res.copy()
-                for _c in _df_show.columns[1:]:
-                    _df_show[_c] = _df_show[_c].apply(format_currency)
-                st.dataframe(_df_show, use_container_width=True, hide_index=True)
-
-                # mês a mês: guardado (+) / reserva diminuiu (−)
-                _mes_rows = []
+                _linhas_res = []
                 for _b in BOLSOES:
-                    if not any(abs(_res_m[m].get(_b, {}).get("guardado", 0.0)) >= 0.005 for m in meses_anual):
+                    _ap, _rg = _soma_bolsao(_b, "aplicado"), _soma_bolsao(_b, "resgatado")
+                    _rd = _soma_bolsao(_b, "rendimentos")
+                    if abs(_ap) + abs(_rg) + abs(_rd) < 0.005:
                         continue
-                    _linha = {"Bolsão": _b}
-                    for m in meses_anual:
-                        _linha[m] = format_currency(_res_m[m].get(_b, {}).get("guardado", 0.0))
-                    _mes_rows.append(_linha)
-                if _mes_rows:
-                    st.caption("Mês a mês — positivo: dinheiro guardado na reserva; negativo: a reserva diminuiu.")
-                    st.dataframe(pd.DataFrame(_mes_rows), use_container_width=True, hide_index=True)
+                    _linhas_res.append({
+                        "Reserva": _b, "Colocou": _ap, "Tirou": _rg,
+                        "Diferença (colocou − tirou)": _ap - _rg, "Rendimentos no extrato": _rd,
+                    })
+                if _linhas_res:
+                    _df_res = pd.DataFrame(_linhas_res)
+                    _tot = {"Reserva": "Total"}
+                    for _c in _df_res.columns[1:]:
+                        _tot[_c] = float(_df_res[_c].sum())
+                    _df_res = pd.concat([_df_res, pd.DataFrame([_tot])], ignore_index=True)
+                    _df_show = _df_res.copy()
+                    for _c in _df_show.columns[1:]:
+                        _df_show[_c] = _df_show[_c].apply(format_currency)
+                    st.dataframe(_df_show, use_container_width=True, hide_index=True)
 
-                _guardado_total = float(_df_res.iloc[-1]["Guardado (aplicado − resgatado)"])
-                _rend_total = float(_df_res.iloc[-1]["Rendimentos"])
-                if abs((_guardado_total - _rend_total) - aplicado_liquido) > 0.011:
-                    st.warning(
-                        "O total por bolsão não bate com o card acima: algum mês salvo não tem a aba Movimentos "
-                        "(só dá para abrir por conta os meses que têm)."
-                    )
-            st.caption(
-                "É fluxo do período, não saldo da conta. Dinheiro que muda de bolsão (ex.: PagBank → CDB do Itaú) "
-                "aparece como resgate em um e aplicação no outro: reduz uma reserva e aumenta a outra, sem mudar "
-                "o total. Ajustes lançados no caixa que citam o PagBank contam como reserva trabalhista."
-            )
+                    _mes_rows = []
+                    for _b in BOLSOES:
+                        if not any(abs(_res_m[m].get(_b, {}).get("guardado", 0.0)) >= 0.005 for m in meses_anual):
+                            continue
+                        _linha = {"Reserva": _b}
+                        for m in meses_anual:
+                            _linha[m] = format_currency(_res_m[m].get(_b, {}).get("guardado", 0.0))
+                        _mes_rows.append(_linha)
+                    if _mes_rows:
+                        st.caption("Mês a mês — positivo: colocou mais do que tirou; negativo: tirou mais do que colocou.")
+                        st.dataframe(pd.DataFrame(_mes_rows), use_container_width=True, hide_index=True)
+
+                    _guardado_total = float(_df_res.iloc[-1]["Diferença (colocou − tirou)"])
+                    _rend_total = float(_df_res.iloc[-1]["Rendimentos no extrato"])
+                    if abs((_guardado_total - _rend_total) - aplicado_liquido) > 0.011:
+                        st.warning(
+                            "O total por reserva não bate com o card acima: algum mês salvo não tem a aba Movimentos "
+                            "(só dá para abrir por conta os meses que têm)."
+                        )
+                st.caption(
+                    "Dinheiro que muda de reserva (ex.: PagBank → CDB do Itaú) aparece como \"tirou\" em uma e "
+                    "\"colocou\" na outra: reduz uma e aumenta a outra, sem mudar o total. Ajustes lançados no caixa "
+                    "que citam o PagBank contam como reserva trabalhista."
+                )
 
         st.markdown("---")
 
