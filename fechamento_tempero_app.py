@@ -1337,7 +1337,7 @@ with tab5:
             else (_ret_mensais[_meio - 1] + _ret_mensais[_meio]) / 2
         ) if _ret_mensais else 0.0
 
-        col1, col2, col3, col4 = st.columns(4)
+        col1, col2, col3 = st.columns(3)
         with col1:
             st.markdown(metric_card_html(
                 "Vendas", format_currency(receita_total),
@@ -1352,58 +1352,8 @@ with tab5:
                 "Retirada dos sócios", format_currency(retiradas_total),
                 f"transferências + sangria<br>mês comum ≈ {format_currency(_retirada_mes_comum)}"),
                 unsafe_allow_html=True)
-        with col4:
-            if aplicado_liquido < 0:
-                st.markdown(metric_card_html(
-                    "Reservas usadas", format_currency(abs(aplicado_liquido)),
-                    "resgatou mais do que aplicou"), unsafe_allow_html=True)
-            else:
-                st.markdown(metric_card_html(
-                    "Guardado em aplicações", format_currency(aplicado_liquido),
-                    "aplicou mais do que resgatou"), unsafe_allow_html=True)
 
-        # Resumo em frases (R$ escapado: o Streamlit trata $ como fórmula)
-        investimento_loja_total = abs(sum(p_["investimento_loja"] for p_ in _pontes_anual.values()))
-        _frase = (
-            f"Em {n_meses} meses a operação gerou {format_currency(operacional_total)} e os sócios retiraram "
-            f"{format_currency(retiradas_total)}"
-        )
-        if dif_apos_retiradas >= 0:
-            _frase += f": sobraram **{format_currency(dif_apos_retiradas)}**."
-        else:
-            _frase += f": as retiradas passaram da operação em **{format_currency(abs(dif_apos_retiradas))}**."
-        if investimento_loja_total >= 0.005:
-            _dif2 = dif_apos_retiradas - investimento_loja_total
-            _frase += f" A loja também investiu {format_currency(investimento_loja_total)} em bens (veículo/equipamentos)"
-            if _dif2 < 0:
-                _frase += f", o que deixou **{format_currency(abs(_dif2))}** a mais do que a operação gerou."
-            else:
-                _frase += f"; ainda sobraram **{format_currency(_dif2)}**."
-        if aplicado_liquido < 0:
-            _frase += f" Nas aplicações, resgatou {format_currency(abs(aplicado_liquido))} a mais do que aplicou."
-        else:
-            _frase += f" Nas aplicações, guardou {format_currency(aplicado_liquido)} a mais do que resgatou."
-        _frase += f" Variação final do caixa no período: {format_currency(resultado_caixa_total)}."
-        st.info(_frase.replace("$", "\\$"))
-
-        _t_alr, _t_res, _t_dre, _t_cmv, _t_conf = st.tabs(["🚨 Alertas", "🏦 Reservas", "📊 DRE e canais", "🥘 CMV", "🔎 Conferência"])
-
-        with _t_alr:
-            # --- Alertas automáticos ---
-            st.markdown('<div class="tempero-section-title">Alertas do período</div>', unsafe_allow_html=True)
-
-            alertas = gerar_alertas(meses_anual, resumos_anual, _dados_cats_anual)
-
-            if not alertas:
-                st.success("Nenhum alerta encontrado. Todos os indicadores dentro do esperado.")
-            else:
-                for alerta in alertas:
-                    if alerta["tipo"] == "erro":
-                        st.error(alerta["texto"])
-                    elif alerta["tipo"] == "aviso":
-                        st.warning(alerta["texto"])
-                    else:
-                        st.success(alerta["texto"])
+        _t_res, _t_dre, _t_cmv, _t_alr, _t_conf = st.tabs(["🏦 Reservas", "📊 DRE e canais", "🥘 CMV", "🚨 Alertas", "🔎 Conferência"])
 
         with _t_res:
             # --- Saldos das reservas (digitados à mão) + conciliação com os fechamentos ---
@@ -1696,6 +1646,23 @@ with tab5:
                 "CMV = (Fornecedores e Insumos + Embalagens) ÷ Receita. "
                 "Referência para marmitarias: 28–32%. A receita é líquida de comissão do iFood e taxa de cartão."
             )
+
+        with _t_alr:
+            # --- Alertas automáticos ---
+            st.markdown('<div class="tempero-section-title">Alertas do período</div>', unsafe_allow_html=True)
+
+            alertas = gerar_alertas(meses_anual, resumos_anual, _dados_cats_anual)
+
+            if not alertas:
+                st.success("Nenhum alerta encontrado. Todos os indicadores dentro do esperado.")
+            else:
+                for alerta in alertas:
+                    if alerta["tipo"] == "erro":
+                        st.error(alerta["texto"])
+                    elif alerta["tipo"] == "aviso":
+                        st.warning(alerta["texto"])
+                    else:
+                        st.success(alerta["texto"])
 
         with _t_conf:
             # --- Conferência geral dos fechamentos salvos ---
