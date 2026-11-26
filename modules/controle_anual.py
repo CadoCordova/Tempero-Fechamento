@@ -239,12 +239,12 @@ def gerar_alertas(meses, resumos, dados_cats) -> list[dict]:
         if cmv > LIMITE_CMV_ATENCAO:
             alertas.append({
                 "tipo": "erro",
-                "texto": f"CMV (média 3 meses) em {mes}: {cmv:.1%}{mes_txt} — acima do limite de 32%. Investigar mix e desperdício."
+                "texto": f"Custo dos ingredientes (média 3 meses) em {mes}: {cmv:.1%}{mes_txt} — acima do limite de 32%. Investigar mix e desperdício."
             })
         elif cmv > LIMITE_CMV_AVISO:
             alertas.append({
                 "tipo": "aviso",
-                "texto": f"CMV (média 3 meses) em {mes}: {cmv:.1%}{mes_txt} — zona de atenção (28–32%)."
+                "texto": f"Custo dos ingredientes (média 3 meses) em {mes}: {cmv:.1%}{mes_txt} — zona de atenção (28–32%)."
             })
 
     # Tendência de CMV crescente (3+ meses seguidos subindo, na média móvel)
@@ -257,7 +257,7 @@ def gerar_alertas(meses, resumos, dados_cats) -> list[dict]:
         if subindo:
             alertas.append({
                 "tipo": "erro",
-                "texto": f"CMV (média 3 meses) subindo todo mês desde {cmv_validos[0][0]} — tendência de alta contínua. Ação urgente."
+                "texto": f"Custo dos ingredientes (média 3 meses) subindo todo mês desde {cmv_validos[0][0]} — tendência de alta contínua. Ação urgente."
             })
 
     # Resultado operacional (sem aplicações e sem retiradas) e retiradas
