@@ -1422,7 +1422,7 @@ with tab5:
             def _fmt_data_br(txt):
                 return pd.to_datetime(txt).strftime("%d/%m/%Y")
 
-            _c1, _c2, _c3 = st.columns(3)
+            _c1, _c2 = st.columns(2)
             with _c1:
                 st.markdown(metric_card_html(
                     "Reserva da loja (Itaú)", format_currency(total_do_registro(_ult_loja)),
@@ -1436,15 +1436,6 @@ with tab5:
                     "Reserva trabalhista (PagBank)", format_currency(total_do_registro(_ult_trab)),
                     (f"saldo líquido em {_fmt_data_br(_ult_trab['data'])}{_extra}" if _ult_trab else "sem saldo lançado")),
                     unsafe_allow_html=True)
-            with _c3:
-                if _cob["cobertura_pagbank"] is not None and _ult_trab:
-                    st.markdown(metric_card_html(
-                        "Cobre a rescisão?", f"{_cob['cobertura_pagbank']:.0%}",
-                        f"só PagBank, contra {format_currency(_cob['passivo'])}<br>"
-                        f"com o Itaú junto: {_cob['cobertura_pagbank_mais_itau']:.0%}"), unsafe_allow_html=True)
-                else:
-                    st.markdown(metric_card_html("Cobre a rescisão?", "—", "lance o saldo do PagBank"),
-                                unsafe_allow_html=True)
 
             for _b, _dias in dias_sem_atualizar(_sr).items():
                 if _dias is None:
